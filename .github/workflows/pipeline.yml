@@ -13,6 +13,11 @@ jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    env:
+      # Force line-buffered/unbuffered stdout so print()-based logging streams
+      # live in the Actions log instead of sitting in a buffer that only
+      # flushes on a clean exit (and is lost entirely on an abnormal one).
+      PYTHONUNBUFFERED: "1"
 
     steps:
       - name: Checkout repository
@@ -31,25 +36,41 @@ jobs:
       - name: Initialize database schema
         env:
           PYTHONPATH: src
-        run: python -m stock_hunter.schema
+        run: python -u -m stock_hunter.schema
 
       - name: Run full pipeline (one-shot)
         env:
           PYTHONPATH: src
+          # Only secrets that are actually set in this repo are declared here.
+          # Do NOT add a line for a secret you haven't created yet -- GitHub
+          # Actions substitutes an empty string for a missing secret rather
+          # than omitting the variable, and an empty-but-present env var
+          # short-circuits ai_narrative.py's os.getenv(...) fallback chains
+          # before they ever reach a working default (this broke the nim
+          # model lookup via an unset NVIDIA_NIM_MODEL secret).
           NARRATIVE_PROVIDER: ${{ secrets.NARRATIVE_PROVIDER }}
           NARRATIVE_MODEL: ${{ secrets.NARRATIVE_MODEL }}
           NARRATIVE_FALLBACK_PROVIDER: ${{ secrets.NARRATIVE_FALLBACK_PROVIDER }}
-          NVIDIA_NIM_MODEL: ${{ secrets.NVIDIA_NIM_MODEL }}
           NARRATIVE_FALLBACK_MODEL: ${{ secrets.NARRATIVE_FALLBACK_MODEL }}
           NARRATIVE_TEMPERATURE: ${{ secrets.NARRATIVE_TEMPERATURE }}
           NARRATIVE_MAX_TOKENS: ${{ secrets.NARRATIVE_MAX_TOKENS }}
           NARRATIVE_MAX_RPS: ${{ secrets.NARRATIVE_MAX_RPS }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           COHERE_API_BASE: ${{ secrets.COHERE_API_BASE }}
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
           NVIDIA_NIM_API_BASE: ${{ secrets.NVIDIA_NIM_API_BASE }}
-        run: python -m stock_hunter.service
+        run: |
+          set -euo pipefail
+          python -u -m stock_hunter.service 2>&1 | tee pipeline_run.log
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-run-log-${{ github.run_id }}
+          path: pipeline_run.log
+          retention-days: 30
+          if-no-files-found: ignore
 
       - name: Upload resulting database
         if: always()

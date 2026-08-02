@@ -578,3 +578,4 @@ def migrate_db(db_path=DB_NAME):
 
 if __name__ == "__main__":
     init_db()
+    migrate_db()

@@ -2,7 +2,7 @@ import sqlite3
 import time
 import json
 from datetime import datetime
-from .schema import init_db, DB_NAME
+from .schema import init_db, migrate_db, DB_NAME
 from .logger import banner, step, info, success, warning, error, ticker_start, ticker_done, progress
 from .sec_edgar_worker import sync_sec_insider_data
 from .sec_etf_worker import sync_etf_reports
@@ -399,8 +399,15 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
     run_id = f"PR-{int(time.time())}"
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Ensure DB tables exist
+    # Ensure DB tables exist, including tables added by later migrations
+    # (eight_k_events, drawdown_events, drawdown_summary, distress_scores).
+    # This must run before ANY worker touches the database -- individual
+    # workers also call migrate_db() defensively, but 8-K sync runs before
+    # the 10-K/10-Q worker (the first place migrate_db() used to be called),
+    # so relying on worker-level calls alone left a window where the new
+    # tables didn't exist yet.
     init_db(db_path)
+    migrate_db(db_path)
 
     banner(f"Starting Drawdown Analyzer pipeline run [{run_id}]")
     info(f"Timestamp: {now_str}")
