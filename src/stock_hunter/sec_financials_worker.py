@@ -536,176 +536,15 @@ def sync_10k_10q_financials(db_path, days_back=365, reset_financials=False, resu
         info(f"Resume mode selected {len(rows)} incomplete filings for LLM processing")
 
     for row in rows:
-        (
-            rowid,
-            ticker,
-            form_type,
-            filing_date,
-            report_url,
-            nj_mda,
-            nj_risk,
-            nj_legal,
-            nj_commit,
-            nj_buybacks,
-            nj_liquidity,
-            nj_subsequent,
-        ) = row
-
-        narrative_blobs = {
-            "narrative_mda": nj_mda,
-            "narrative_risk_factors": nj_risk,
-            "narrative_legal": nj_legal,
-            "narrative_commitments": nj_commit,
-            "narrative_buybacks": nj_buybacks,
-            "narrative_liquidity": nj_liquidity,
-            "narrative_subsequent": nj_subsequent,
-        }
-        narrative_blobs = _ensure_narratives_loaded(conn, cursor, rowid, report_url, narrative_blobs)
-
-        # Extract raw text
-        mda_text = _extract_narrative_text(narrative_blobs["narrative_mda"])
-        risk_text = _extract_narrative_text(narrative_blobs["narrative_risk_factors"])
-        legal_text = _extract_narrative_text(narrative_blobs["narrative_legal"])
-        commit_text = _extract_narrative_text(narrative_blobs["narrative_commitments"])
-        buybacks_text = _extract_narrative_text(narrative_blobs["narrative_buybacks"])
-        liquidity_text = _extract_narrative_text(narrative_blobs["narrative_liquidity"])
-        subsequent_text = _extract_narrative_text(narrative_blobs["narrative_subsequent"])
-
-        # Skip if no meaningful text at all
-        if not any([mda_text, risk_text, legal_text, commit_text, buybacks_text, liquidity_text, subsequent_text]):
-            continue
-
-        # Risk factors: score, summary, sentiment
-        risk_result = {"score": 50, "summary": "No risk factors provided.", "sentiment": "neutral"}
-        if risk_text.strip():
-            risk_result = score_risk_factors(
-                risk_text,
-                label=f"{ticker} {form_type} {filing_date} risk_factors",
-            )
-
-        # MDA summary
-        mda_summary = ["No MD&A provided."]
-        if mda_text.strip():
-            mda_summary = summarize_mda(
-                mda_text,
-                label=f"{ticker} {form_type} {filing_date} mda",
-            )
-
-        # Legal summary
-        legal_summary = ["No legal proceedings disclosed."]
-        if legal_text.strip():
-            legal_summary = summarize_legal(
-                legal_text,
-                label=f"{ticker} {form_type} {filing_date} legal",
-            )["summary_bullets"]
-
-        # Commitments summary
-        commit_summary = ["No material commitments or contingencies."]
-        if commit_text.strip():
-            commit_summary = summarize_commitments(
-                commit_text,
-                label=f"{ticker} {form_type} {filing_date} commitments",
-            )["summary_bullets"]
-
-        # Buybacks summary
-        buybacks_summary = ["No share repurchase activity reported."]
-        if buybacks_text.strip():
-            buybacks_summary = summarize_buybacks(
-                buybacks_text,
-                label=f"{ticker} {form_type} {filing_date} buybacks",
-            )["summary_bullets"]
-
-        # Liquidity summary
-        liquidity_summary = ["No liquidity details provided."]
-        if liquidity_text.strip():
-            liquidity_summary = summarize_liquidity(
-                liquidity_text,
-                label=f"{ticker} {form_type} {filing_date} liquidity",
-            )["summary_bullets"]
-
-        # Subsequent events summary
-        subsequent_summary = ["No subsequent events reported."]
-        if subsequent_text.strip():
-            subsequent_summary = summarize_subsequent(
-                subsequent_text,
-                label=f"{ticker} {form_type} {filing_date} subsequent",
-            )["summary_bullets"]
-
-        # Overall sentiment and comprehensive summary
-        overall_sentiment = "neutral"
-        comprehensive_summary = []
-        comp_result = get_comprehensive_narrative_analysis(
-            risk_text,
-            mda_text,
-            legal_text,
-            commit_text,
-            buybacks_text,
-            liquidity_text,
-            subsequent_text,
-            label=f"{ticker} {form_type} {filing_date} comprehensive",
-        )
-        overall_sentiment = comp_result.get("overall_sentiment", "neutral")
-        raw_bullets = comp_result.get("comprehensive_summary", [])
-        if isinstance(raw_bullets, list):
-            comprehensive_summary = [str(b).strip() for b in raw_bullets if isinstance(b, str)]
-        else:
-            comprehensive_summary = []
-
-        # Prepare update
-        update_sql = """
-            UPDATE sec_financials SET
-                risk_score = ?,
-                risk_summary = ?,
-                risk_sentiment = ?,
-                md_a_summary = ?,
-                full_sentiment = ?,
-                comprehensive_summary = ?
-            WHERE rowid = ?
-        """
-        # Ensure md_a_summary is a string (list of bullets -> join with space or take first?)
-        # According to schema, md_a_summary is TEXT, <=250 characters, short MD&A digest.
-        # We'll join the bullets with space and truncate.
-        md_a_summary_str = " ".join(mda_summary) if isinstance(mda_summary, list) else str(mda_summary)
-        if len(md_a_summary_str) > 250:
-            md_a_summary_str = md_a_summary_str[:250]
-
-        # risk_summary already string, truncate to 200
-        risk_summary_str = risk_result.get("summary", "")
-        if len(risk_summary_str) > 200:
-            risk_summary_str = risk_summary_str[:200]
-
-        # risk_sentiment string
-        risk_sentiment_str = risk_result.get("sentiment", "neutral")
-        # Ensure it's one of expected values
-        if risk_sentiment_str not in ("positive", "neutral", "negative"):
-            risk_sentiment_str = "neutral"
-
-        # overall_sentiment string
-        if overall_sentiment not in ("positive", "neutral", "negative"):
-            overall_sentiment = "neutral"
-
-        # comprehensive_summary JSON string
         try:
-            comp_json = json.dumps(comprehensive_summary, ensure_ascii=False)
-        except Exception:
-            comp_json = "[]"
-
-        cursor.execute(
-            update_sql,
-            (
-                risk_result.get("score", 50),
-                risk_summary_str,
-                risk_sentiment_str,
-                md_a_summary_str,
-                overall_sentiment,
-                comp_json,
-                rowid,
-            ),
-        )
-        conn.commit()
-        updated += 1
-        if updated % 10 == 0:
-            info(f"Financial narrative updates processed: {updated}")
+            if _process_llm_narrative_row(conn, cursor, row):
+                updated += 1
+                if updated % 10 == 0:
+                    info(f"Financial narrative updates processed: {updated}")
+        except Exception as exc:
+            ticker = row[1] if len(row) > 1 else "unknown"
+            error(f"{ticker}: unexpected failure during LLM narrative scoring, skipping this filing: {exc}")
+            conn.rollback()
 
     conn.close()
     total_touched = seeded_rows + updated
@@ -714,6 +553,203 @@ def sync_10k_10q_financials(db_path, days_back=365, reset_financials=False, resu
     )
     banner("Step 1b/5: LLM narrative scoring pass complete")
     return total_touched
+
+
+# Distinct from the "No X provided." defaults below: those mean the filing had
+# no text for that section at all (not an error). This means text existed but
+# the LLM failed to produce parseable output for it even after one retry, so
+# it must be visually and semantically distinguishable when reviewing the data.
+_LLM_FAILURE_MARKER = "LLM summarization failed for this section."
+
+
+def _llm_call_or_fallback(call_fn, fallback, label):
+    """Run one narrative LLM call; on any failure (including an exhausted
+    JSON-repair retry inside ai_narrative.py), log it and fall back to an
+    explicit failure marker instead of letting the exception propagate and
+    crash the entire multi-ticker pipeline run over one bad section.
+    """
+    try:
+        return call_fn()
+    except Exception as exc:
+        error(f"LLM call failed for [{label}], using failure fallback: {exc}")
+        return fallback
+
+
+def _process_llm_narrative_row(conn, cursor, row) -> bool:
+    """Process one filing's narrative sections through the LLM. Returns True
+    if the row was updated. Individual section failures fall back to an
+    explicit failure marker rather than aborting the whole filing."""
+    (
+        rowid,
+        ticker,
+        form_type,
+        filing_date,
+        report_url,
+        nj_mda,
+        nj_risk,
+        nj_legal,
+        nj_commit,
+        nj_buybacks,
+        nj_liquidity,
+        nj_subsequent,
+    ) = row
+
+    narrative_blobs = {
+        "narrative_mda": nj_mda,
+        "narrative_risk_factors": nj_risk,
+        "narrative_legal": nj_legal,
+        "narrative_commitments": nj_commit,
+        "narrative_buybacks": nj_buybacks,
+        "narrative_liquidity": nj_liquidity,
+        "narrative_subsequent": nj_subsequent,
+    }
+    narrative_blobs = _ensure_narratives_loaded(conn, cursor, rowid, report_url, narrative_blobs)
+
+    # Extract raw text
+    mda_text = _extract_narrative_text(narrative_blobs["narrative_mda"])
+    risk_text = _extract_narrative_text(narrative_blobs["narrative_risk_factors"])
+    legal_text = _extract_narrative_text(narrative_blobs["narrative_legal"])
+    commit_text = _extract_narrative_text(narrative_blobs["narrative_commitments"])
+    buybacks_text = _extract_narrative_text(narrative_blobs["narrative_buybacks"])
+    liquidity_text = _extract_narrative_text(narrative_blobs["narrative_liquidity"])
+    subsequent_text = _extract_narrative_text(narrative_blobs["narrative_subsequent"])
+
+    # Skip if no meaningful text at all
+    if not any([mda_text, risk_text, legal_text, commit_text, buybacks_text, liquidity_text, subsequent_text]):
+        return False
+
+    # Risk factors: score, summary, sentiment
+    risk_result = {"score": 50, "summary": "No risk factors provided.", "sentiment": "neutral"}
+    if risk_text.strip():
+        risk_result = _llm_call_or_fallback(
+            lambda: score_risk_factors(risk_text, label=f"{ticker} {form_type} {filing_date} risk_factors"),
+            {"score": 50, "summary": _LLM_FAILURE_MARKER, "sentiment": "neutral"},
+            f"{ticker} {form_type} {filing_date} risk_factors",
+        )
+
+    # MDA summary
+    mda_summary = ["No MD&A provided."]
+    if mda_text.strip():
+        mda_summary = _llm_call_or_fallback(
+            lambda: summarize_mda(mda_text, label=f"{ticker} {form_type} {filing_date} mda"),
+            [_LLM_FAILURE_MARKER],
+            f"{ticker} {form_type} {filing_date} mda",
+        )
+
+    # Legal summary
+    legal_summary = ["No legal proceedings disclosed."]
+    if legal_text.strip():
+        legal_summary = _llm_call_or_fallback(
+            lambda: summarize_legal(legal_text, label=f"{ticker} {form_type} {filing_date} legal")["summary_bullets"],
+            [_LLM_FAILURE_MARKER],
+            f"{ticker} {form_type} {filing_date} legal",
+        )
+
+    # Commitments summary
+    commit_summary = ["No material commitments or contingencies."]
+    if commit_text.strip():
+        commit_summary = _llm_call_or_fallback(
+            lambda: summarize_commitments(commit_text, label=f"{ticker} {form_type} {filing_date} commitments")["summary_bullets"],
+            [_LLM_FAILURE_MARKER],
+            f"{ticker} {form_type} {filing_date} commitments",
+        )
+
+    # Buybacks summary
+    buybacks_summary = ["No share repurchase activity reported."]
+    if buybacks_text.strip():
+        buybacks_summary = _llm_call_or_fallback(
+            lambda: summarize_buybacks(buybacks_text, label=f"{ticker} {form_type} {filing_date} buybacks")["summary_bullets"],
+            [_LLM_FAILURE_MARKER],
+            f"{ticker} {form_type} {filing_date} buybacks",
+        )
+
+    # Liquidity summary
+    liquidity_summary = ["No liquidity details provided."]
+    if liquidity_text.strip():
+        liquidity_summary = _llm_call_or_fallback(
+            lambda: summarize_liquidity(liquidity_text, label=f"{ticker} {form_type} {filing_date} liquidity")["summary_bullets"],
+            [_LLM_FAILURE_MARKER],
+            f"{ticker} {form_type} {filing_date} liquidity",
+        )
+
+    # Subsequent events summary
+    subsequent_summary = ["No subsequent events reported."]
+    if subsequent_text.strip():
+        subsequent_summary = _llm_call_or_fallback(
+            lambda: summarize_subsequent(subsequent_text, label=f"{ticker} {form_type} {filing_date} subsequent")["summary_bullets"],
+            [_LLM_FAILURE_MARKER],
+            f"{ticker} {form_type} {filing_date} subsequent",
+        )
+
+    # Overall sentiment and comprehensive summary
+    comp_result = _llm_call_or_fallback(
+        lambda: get_comprehensive_narrative_analysis(
+            risk_text, mda_text, legal_text, commit_text, buybacks_text, liquidity_text, subsequent_text,
+            label=f"{ticker} {form_type} {filing_date} comprehensive",
+        ),
+        {"overall_sentiment": "neutral", "comprehensive_summary": [_LLM_FAILURE_MARKER]},
+        f"{ticker} {form_type} {filing_date} comprehensive",
+    )
+    overall_sentiment = comp_result.get("overall_sentiment", "neutral")
+    raw_bullets = comp_result.get("comprehensive_summary", [])
+    if isinstance(raw_bullets, list):
+        comprehensive_summary = [str(b).strip() for b in raw_bullets if isinstance(b, str)]
+    else:
+        comprehensive_summary = []
+
+    # Prepare update
+    update_sql = """
+        UPDATE sec_financials SET
+            risk_score = ?,
+            risk_summary = ?,
+            risk_sentiment = ?,
+            md_a_summary = ?,
+            full_sentiment = ?,
+            comprehensive_summary = ?
+        WHERE rowid = ?
+    """
+    # Ensure md_a_summary is a string (list of bullets -> join with space or take first?)
+    # According to schema, md_a_summary is TEXT, <=250 characters, short MD&A digest.
+    # We'll join the bullets with space and truncate.
+    md_a_summary_str = " ".join(mda_summary) if isinstance(mda_summary, list) else str(mda_summary)
+    if len(md_a_summary_str) > 250:
+        md_a_summary_str = md_a_summary_str[:250]
+
+    # risk_summary already string, truncate to 200
+    risk_summary_str = risk_result.get("summary", "")
+    if len(risk_summary_str) > 200:
+        risk_summary_str = risk_summary_str[:200]
+
+    # risk_sentiment string
+    risk_sentiment_str = risk_result.get("sentiment", "neutral")
+    # Ensure it's one of expected values
+    if risk_sentiment_str not in ("positive", "neutral", "negative"):
+        risk_sentiment_str = "neutral"
+
+    # overall_sentiment string
+    if overall_sentiment not in ("positive", "neutral", "negative"):
+        overall_sentiment = "neutral"
+
+    # comprehensive_summary JSON string
+    try:
+        comp_json = json.dumps(comprehensive_summary, ensure_ascii=False)
+    except Exception:
+        comp_json = "[]"
+
+    cursor.execute(
+        update_sql,
+        (
+            risk_result.get("score", 50),
+            risk_summary_str,
+            risk_sentiment_str,
+            md_a_summary_str,
+            overall_sentiment,
+            comp_json,
+            rowid,
+        ),
+    )
+    conn.commit()
+    return True
 
 
 if __name__ == "__main__":
