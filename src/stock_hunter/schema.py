@@ -187,7 +187,7 @@ DEFAULT_UNIVERSE = [
     ('SMCI', 'Super Micro Computer Inc.', 'Stock', 'Technology', 'Computer Hardware', 100.0),
     ('SNPS', 'Synopsys Inc.', 'Stock', 'Technology', 'Software - Infrastructure', 102.0),
     ('CDNS', 'Cadence Design Systems Inc.', 'Stock', 'Technology', 'Software - Infrastructure', 105.0),
-    ('FI', 'Fiserv Inc.', 'Stock', 'Technology', 'Information Technology Services', 108.0),
+    ('FISV', 'Fiserv Inc.', 'Stock', 'Technology', 'Information Technology Services', 108.0),
     ('FIS', 'Fidelity National Information', 'Stock', 'Technology', 'Information Technology Services', 100.0),
     ('SHOP', 'Shopify Inc.', 'Stock', 'Technology', 'Software - Application', 110.0),
     ('MU', 'Micron Technology Inc.', 'Stock', 'Technology', 'Semiconductors', 120.0),
@@ -287,14 +287,13 @@ DEFAULT_UNIVERSE = [
     ('SPGI', 'S&P Global Inc.', 'Stock', 'Financial', 'Financial Data & Stock Exchanges', 150.0),
     ('CME', 'CME Group Inc.', 'Stock', 'Financial', 'Financial Data & Stock Exchanges', 100.0),
     ('AON', 'Aon plc', 'Stock', 'Financial', 'Insurance Brokers', 100.0),
-    ('MMC', 'Marsh & McLennan Companies', 'Stock', 'Financial', 'Insurance Brokers', 105.0),
+    ('MRSH', 'Marsh & McLennan Companies', 'Stock', 'Financial', 'Insurance Brokers', 105.0),
     ('PGR', 'The Progressive Corp.', 'Stock', 'Financial', 'Insurance - Property & Casualty', 130.0),
     ('CB', 'Chubb Limited', 'Stock', 'Financial', 'Insurance - Property & Casualty', 110.0),
     ('TRV', 'The Travelers Companies', 'Stock', 'Financial', 'Insurance - Property & Casualty', 100.0),
     ('USB', 'U.S. Bancorp', 'Stock', 'Financial', 'Banks - Regional', 100.0),
     ('MET', 'MetLife Inc.', 'Stock', 'Financial', 'Insurance - Life', 100.0),
     ('PNC', 'PNC Financial Services Group', 'Stock', 'Financial', 'Banks - Regional', 100.0),
-    ('BK', 'The Bank of New York Mellon', 'Stock', 'Financial', 'Asset Management', 100.0),
     ('AIG', 'American International Group', 'Stock', 'Financial', 'Insurance - Diversified', 100.0),
     ('ALL', 'The Allstate Corporation', 'Stock', 'Financial', 'Insurance - Property & Casualty', 100.0),
     ('COF', 'Capital One Financial Corp.', 'Stock', 'Financial', 'Credit Services', 100.0),
@@ -421,6 +420,11 @@ def migrate_db(db_path=DB_NAME):
         ("capex_usd",                    "REAL"),
         ("depreciation_amortization_usd", "REAL"),
         ("dividends_paid_usd",           "REAL"),
+        # Structural concentration risk (product/customer/supplier/geographic),
+        # extracted via LLM from the same risk-factor/MD&A text already fetched.
+        ("concentration_risk_score",   "INTEGER"),
+        ("concentration_risk_summary", "TEXT"),
+        ("concentration_risk_type",    "TEXT"),
     ]
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()

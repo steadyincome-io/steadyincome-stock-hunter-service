@@ -134,6 +134,165 @@ Each pipeline run now also computes, per active ticker:
 
 These run automatically as part of `run_pipeline()` / `stock_hunter.service` — no separate command is needed.
 
+### Score formulas
+
+All scores below are 0–100 unless noted. `daily_snapshot` stores the final values; the source
+modules are `scoring.py`, `distress_analytics.py`, and `drawdown_analytics.py`.
+
+#### Insider sentiment score (`scoring.py: compute_insider_sentiment_score`)
+
+Aggregates `insider_trades` over a trailing 180-day window. Each transaction is weighted by its
+Form 4 code so open-market buys/sells dominate over routine equity-comp activity:
+
+| Code | Meaning | Weight |
+|---|---|---:|
+| P | Open-market purchase | 3.0 |
+| S | Open-market sale | 3.0 |
+| A | Grant/award | 0.3 |
+| M | Option exercise | 0.3 |
+| F | Tax withholding | 0.1 |
+| G | Gift | 0.1 |
+| other | — | 0.5 |
+
+```
+signed_total      = Σ (trade_value × code_weight × direction)     # direction: +1 buy, -1 sell
+weighted_abs_total = Σ (trade_value × code_weight)
+ratio             = signed_total / weighted_abs_total              # -1..+1
+insider_sentiment_score = clamp(round(50 + 50 × ratio), 0, 100)
+```
+
+**How to read it:** 50 = no trades in the window, or exactly balanced buying/selling. **Above 50 = net
+open-market buying (bullish signal)** — the closer to 100, the more insider buying dominated. **Below
+50 = net open-market selling (bearish signal)** — the closer to 0, the more insider selling dominated.
+Because P/S are weighted 6–30x higher than A/M/F/G, a handful of open-market trades can move this
+score much more than a large batch of routine option exercises or tax-withholding sales.
+
+#### Drawdown opportunity score (`drawdown_analytics.py: drawdown_opportunity_score`)
+
+Answers "how unusual is the *current* drawdown compared to this ticker's own drawdown history?"
+
+```
+if |current_drawdown_pct| < 5:
+    score = 20                                       # not really in a drawdown
+else:
+    score = 40 + (|current_drawdown_pct| / max(avg_drawdown_pct, 1)) × 15
+    if worst_drawdown_pct > 0:
+        score += (|current_drawdown_pct| / worst_drawdown_pct) × 20
+score = clamp(round(score), 0, 100)
+```
+
+**How to read it:** higher = the stock is deeper into a drawdown than it typically goes, relative to
+its own history — i.e. a more historically-unusual dip. It does not by itself mean "buy"; it's one
+input alongside quality/risk into the investment score below.
+
+#### Financial-distress score (`distress_analytics.py: compute_distress`)
+
+Built from the two most recent 10-K filings only (never 10-Q data). Two independent models feed into it:
+
+**Altman Z-score** (classic 5-factor formula, using book values from SEC filings + live market cap for X4):
+```
+X1 = (current_assets - current_liabilities) / total_assets
+X2 = retained_earnings / total_assets
+X3 = operating_income / total_assets
+X4 = market_cap / total_liabilities
+X5 = revenue / total_assets
+Altman Z = 1.2×X1 + 1.4×X2 + 3.3×X3 + 0.6×X4 + 1.0×X5
+```
+Requires at least 3 of the 5 components to be computable, else `null` ("Insufficient data").
+Note: designed for non-financial firms — reads structurally low for banks/insurers.
+
+**Piotroski F-score** (0–9; each of the 9 pass/fail criteria below only counts if both years of data
+exist; the final score is scaled to a 0–9 range by the fraction actually evaluable):
+1. Positive ROA (net income / total assets)
+2. Positive operating cash flow
+3. ROA improved year-over-year
+4. Operating cash flow exceeds net income (earnings quality)
+5. Total-debt-to-assets ratio decreased year-over-year
+6. Current ratio improved year-over-year
+7. No material new share issuance (shares outstanding grew ≤1%)
+8. Operating margin improved year-over-year
+9. Asset turnover (revenue / total assets) improved year-over-year
+
+**Combining into `distress_risk_score` (0–100, higher = riskier):**
+```
+base_risk = 15   if Altman Z > 2.99   (safe zone)
+          | 45   if 1.81 ≤ Altman Z ≤ 2.99   (grey zone)
+          | 80   if Altman Z < 1.81   (distress zone)
+          | 50   if Altman Z unavailable
+base_risk += (4.5 - piotroski_f) × 4    # shifts risk up/down based on fundamental strength
+distress_risk_score = clamp(round(base_risk), 0, 100)
+```
+Mapped to wording: **0–30 "Low financial-distress risk"**, **31–60 "Elevated financial-distress
+risk"**, **61–100 "Material solvency concerns"**. Falls back to `"Insufficient data"` (not a numeric
+score) when there isn't enough 10-K history to compute either model — the platform never guesses at
+a number it can't support, per the "no absolute bankruptcy prediction" design principle.
+
+#### Risk score (`scoring.py: compute_risk_score`)
+
+Weighted composite, 0–100, **higher = riskier**:
+
+| Component | Weight | Derived from |
+|---|---:|---|
+| Balance-sheet risk | 20% | `distress_risk_score` above (50 if unavailable) |
+| Liquidity risk | 15% | Current ratio: 20 if ≥1.5, 50 if ≥1.0, else 80 |
+| Earnings stability risk | 10% | Revenue volatility % × 3 (50 if unavailable) |
+| Cash-flow risk | 15% | 20 if operating cash flow positive, else 80 |
+| Filing risk factors | 15% | LLM-derived `risk_score` from the latest 10-K narrative |
+| Legal/regulatory risk | 10% | 70 if legal-section sentiment negative, 30 if positive, else 50 |
+| Drawdown severity | 10% | `min(100, |current_drawdown_pct| × 2)` |
+| Insider selling | 5% | `100 - insider_sentiment_score` |
+
+```
+risk_score = 0.20×balance_sheet + 0.15×liquidity + 0.10×earnings_stability + 0.15×cash_flow
+           + 0.15×filing_risk + 0.10×legal_risk + 0.10×drawdown_severity + 0.05×insider_selling
+```
+**Hard overrides** (applied after the weighted sum): any bankruptcy-related 8-K (item 1.03) in the
+trailing 180 days forces `risk_score = max(risk_score, 85)`; any debt-related 8-K (items 1.01, 1.02,
+2.03–2.06, 3.01, 4.01) adds a flat `+8`.
+
+#### Quality score (`scoring.py: compute_quality_score`, stocks only)
+
+Weighted composite, 0–100, **higher = higher fundamental quality**. Each input is linearly scaled
+between a low/high band (e.g. revenue growth: -5% → score 20, +20% → score 90; values outside the
+band clamp to the endpoint; missing data defaults to a neutral 50):
+
+| Component | Weight | Scaling band |
+|---|---:|---|
+| Revenue growth & stability | 15% | -5% to +20% YoY revenue growth |
+| EPS/net-income quality | 15% | 0% to 25% net margin |
+| Free cash flow quality | 20% | 0% to 25% operating-cash-flow margin |
+| Profitability | 15% | 0% to 30% operating margin |
+| Balance-sheet strength | 15% | 90 if debt/equity < 0.5, 20 if > 2.5, else 55 |
+| ROIC/capital efficiency | 10% | 0% to 20% return on assets |
+| Dividend/buyback quality | 10% | 0% to 4% dividend yield |
+
+ETFs (and stocks with no SEC fundamentals yet) fall back to a simpler legacy score based on PE
+ratio and current drawdown (`calculate_quality_score` in `pipeline.py`).
+
+#### Investment score (`scoring.py: compute_investment_score`)
+
+Weighted composite, 0–100, **higher = more attractive**. Note risk and filing-risk are inverted
+(subtracted from 100) since lower risk should raise the investment score:
+
+| Component | Weight |
+|---|---:|
+| Quality score | 30% |
+| Valuation score (legacy PE/drawdown-based score) | 20% |
+| Inverted risk score | 15% |
+| Inverted filing risk score | 10% |
+| Drawdown opportunity score | 10% |
+| Dividend score (`20 + dividend_yield% × 15`, clamped) | 10% |
+| Insider sentiment score | 5% |
+
+```
+investment_score = 0.30×quality + 0.20×valuation + 0.15×(100-risk) + 0.10×(100-filing_risk)
+                  + 0.10×drawdown_opportunity + 0.10×dividend + 0.05×insider_sentiment
+```
+
+All formulas above are transparent by design (doc section 27, "Reproducibility") — every score can
+be recomputed by hand from the columns already stored in `sec_financials`, `daily_snapshot`,
+`drawdown_summary`, and `distress_scores`.
+
 ### 2. Run as a One-Shot Execution or Background Service Daemon
 
 Run one-shot sync:
@@ -380,6 +539,133 @@ RUN_REAL_LLM_TESTS=1 PYTHONPATH=src python -m unittest tests.test_financials_int
 It requires:
 - `NARRATIVE_PROVIDER=openai|cohere|nim`
 - the matching API key in `.env` or your shell environment
+
+## Weekly options premium screener
+
+`premium_screener.py` uses the pipeline's stored analytics plus a live `yfinance` lookup to shortlist
+stocks for short-dated premium-selling strategies (cash-secured puts, put credit spreads, covered
+calls). It is a screening aid for narrowing the universe, **not** a trade recommendation or profit
+guarantee -- it has no view on broad-market direction, true options-market liquidity beyond open
+interest, or position sizing.
+
+```bash
+# Cash-secured put candidates (default strategy)
+PYTHONPATH=src python -m stock_hunter.premium_screener
+
+# Covered call candidates, limit to 8 final picks
+PYTHONPATH=src python -m stock_hunter.premium_screener --strategy covered_call --max-picks 8
+
+# Put credit spread candidates against a specific database file
+PYTHONPATH=src python -m stock_hunter.premium_screener --strategy put_credit_spread --db-path pipeline_runs/drawdown_analyzer.db
+
+# Sell strikes further/closer to the money, and a wider/narrower credit spread
+PYTHONPATH=src python -m stock_hunter.premium_screener --strategy put_credit_spread --short-otm-pct 0.08 --spread-width-strikes 3
+```
+
+What it does, in order:
+
+1. **Avoid list** -- hard-excludes any ticker with `distress_scores.risk_level = 'Material solvency
+   concerns'`, a bankruptcy-related 8-K in the trailing 180 days, or `daily_snapshot.risk_score >= 65`.
+   Insider selling is intentionally **not** a hard exclude: this universe is mega-cap-only, where
+   executives are paid largely in equity, so routine (often pre-scheduled 10b5-1) diversification
+   sales are normal regardless of outlook, and testing showed little correlation between heavy insider
+   selling and near-term price direction for these names. Instead, insider activity (distinct
+   open-market sellers and total dollar value sold, trailing 180 days) is surfaced as informational
+   `#Sellers` / `InsSel$M` columns on every candidate so you can weigh it yourself -- it still
+   contributes a small weight inside `daily_snapshot.risk_score` itself, so it isn't entirely ignored,
+   just not treated as disqualifying on its own.
+2. **Strategy fit ranking** -- from what's left, ranks by `drawdown_opportunity_score` (cash-secured
+   puts / put credit spreads -- you want a name pulled back further than usual) or `investment_score`
+   (covered calls), after a minimum `quality_score` bar.
+3. **Earnings exclusion** -- drops any candidate with an earnings date (via `yfinance`'s calendar)
+   inside the next 7 days, since an earnings print is the most common way a short-dated premium trade
+   blows up.
+4. **Options chain check** -- pulls the nearest ~1-week expiration (4-10 days out) via `yfinance`, then:
+   - **cash_secured_put / covered_call** (single leg): picks a strike `--short-otm-pct` (default 5%)
+     out-of-the-money -- below current price for puts, above for calls -- rather than at-the-money.
+   - **put_credit_spread** (two legs): sells that same OTM strike and buys a further-out-of-the-money
+     protective put `--spread-width-strikes` (default 2) strikes lower, then reports full spread
+     economics priced off a **conservative bid/ask fill** (sell the short leg at its bid, buy the long
+     leg at its ask) as the primary `Credit`/`MaxLoss`/`RoR%`/`BrkEven` figures -- not the more
+     optimistic mid-price, which assumes a fill you might not actually get. The mid-price value is
+     still shown as a secondary `MidCr` reference column (upside if you get filled better than the
+     conservative assumption), but a spread that isn't a genuine credit even at the conservative fill
+     is not viable and is skipped outright.
+   All contract types compare implied volatility to trailing realized volatility (computed from stored
+   `price_history`) as a rough "is the premium rich enough to bother selling" signal, and attach a
+   `ProbOTM%` column -- see "Probability of profit" below.
+5. **Correlation diversification** -- greedily selects the final candidate list so no two picks exceed
+   a 0.70 trailing 90-day return correlation, avoiding a final list that's secretly one concentrated
+   sector bet.
+
+**Trend filter:** `cash_secured_put` and `put_credit_spread` (both bullish/neutral -- you want the stock
+to stay flat-to-up) additionally require the live price to be above its trailing `--sma-period`
+(default 50) day simple moving average, computed from stored `price_history`. A name below its own SMA
+is rejected with the specific price/SMA values shown, same as any other rejection reason. `covered_call`
+is intentionally exempt -- it's often written specifically to generate income on a name that's lagging.
+
+**Probability of profit (`ProbOTM%`):** every candidate includes a Black-Scholes estimate of the
+probability that strike finishes out-of-the-money at expiration (for a put, price finishes above the
+strike; for a call, below it), computed from that contract's own implied volatility, the live spot
+price, and days to expiration (`--risk-free-rate`, default 4.5%, is the only external assumption). This
+is a **model estimate, not a guarantee or a backtested figure** -- it assumes lognormal returns (the
+standard Black-Scholes simplification, which real markets don't perfectly follow) and estimates the
+probability of finishing OTM at expiration specifically, not the probability that this strategy's actual
+exit rules (profit target / loss stop / early close) end up profitable.
+
+**Price freshness:** `quality_score`, `risk_score`, and `drawdown_opportunity_score` come from
+`daily_snapshot`, i.e. whatever the last full pipeline run computed -- these aren't intraday-sensitive.
+The displayed `Price` and every OTM strike target, however, are refreshed with a live `yfinance` quote
+at screener runtime (not the potentially stale stored price), since strikes need to match the current
+market, not wherever the price was when the pipeline last ran. If a live quote can't be fetched for a
+ticker, it falls back to the stored price and is marked with a trailing `*` in the report.
+
+**Drawdown / 52-week-low context:** every candidate row also shows `CurrDD%` (current drawdown from the
+52-week high, negative), `AvgDD%` (this ticker's own historical average drawdown magnitude, from
+`drawdown_summary`), and `Lo52wGap%` (how far the live price sits above its 52-week low). A low
+`Lo52wGap%` combined with a deep `CurrDD%` flags a name trading near its yearly low -- useful context
+for cash-secured puts / put credit spreads, where you're implicitly betting the stock holds or bounces
+from around current levels, but it's a data point to weigh, not a signal that a bounce is imminent.
+
+**Filtered-out reporting:** every ticker that didn't make the final candidate list is tracked with a
+specific reason -- avoid-list hit, missing snapshot data, below the strategy's quality bar, ranked
+outside `--pool-size`, upcoming earnings, no usable weekly option chain / non-viable spread economics,
+or too correlated with an already-picked name. `print_report` renders this as a full table by default;
+pass `--no-show-rejected` to suppress it for a shorter run. Candidates + rejected always sum to the
+full active-stock universe -- no ticker silently disappears without a logged reason.
+
+**Macro/regime gates:** `cash_secured_put` and `put_credit_spread` (bullish/neutral -- you're implicitly
+betting the market holds up) are gated by two whole-run checks before any individual ticker is screened,
+since no amount of stock-picking protects a single-name short-premium position from a genuine systemic
+shock:
+- **Market regime** -- refuses new trades if `--market-index` (default SPY) is below its trailing
+  `--market-sma-period` (default 200) day SMA, the standard "don't sell premium into a confirmed bear
+  market" rule.
+- **VIX pause** -- refuses new trades if VIX is at/above `--vix-threshold` (default 30), a systemic-stress
+  signal.
+
+Both fail open (treat conditions as healthy) if the underlying data can't be fetched, logged as such
+rather than silently assumed. `covered_call` is exempt from both, consistent with it not requiring an
+uptrend. When either gate trips, the run stops before any per-ticker work and reports why via
+`result["blocked_reason"]` -- this is a whole-run gate, not a per-ticker rejection, so no individual
+stock's quality can override it.
+
+**Concentration risk (`ConcRisk`):** every candidate also shows an LLM-derived 0-100 estimate of
+structural product/customer/supplier/geographic concentration (e.g., "manufacturing concentrated with
+outsourcing partners in China, India, Taiwan"), extracted from the latest 10-K's risk-factor and MD&A
+text -- the same text already fetched for other narrative scoring, no new data source. Informational
+only, not a filter, for the same reason insider selling isn't a hard exclude: LLM-derived signals here
+are noisier than the numeric distress/risk scores. Detail text for any candidate scoring >= 30 prints
+below the table. Extraction uses a keyword-anchored excerpt of the full stored text rather than a naive
+first-N-characters truncation -- verified against a real AAPL 10-K where the actual disclosure was
+present but outside a blind truncation window; a plain prefix-based approach missed it, the
+keyword-anchored version caught it correctly.
+
+Known gaps: no true options-market depth/liquidity scoring beyond open interest, no sub-sector/thematic
+concentration check (e.g. "AI capex exposure" spanning multiple GICS sectors) beyond the per-company
+concentration signal above, and `yfinance`'s implied volatility/earnings-calendar/VIX data can
+occasionally be stale or missing for a given ticker (the screener logs and skips or fails open rather
+than failing the whole run).
 
 ## Troubleshooting
 

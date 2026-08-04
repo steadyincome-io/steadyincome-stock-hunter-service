@@ -21,10 +21,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
@@ -65,7 +65,7 @@ jobs:
 
       - name: Upload run log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pipeline-run-log-${{ github.run_id }}
           path: pipeline_run.log
@@ -74,7 +74,7 @@ jobs:
 
       - name: Upload resulting database
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: drawdown-analyzer-db-${{ github.run_id }}
           path: drawdown_analyzer.db
@@ -82,7 +82,7 @@ jobs:
 
       - name: Upload SEC companyfacts cache
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sec-companyfacts-cache-${{ github.run_id }}
           path: cache/sec_companyfacts

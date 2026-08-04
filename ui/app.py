@@ -37,6 +37,7 @@ from ui.db import (
     get_ticker_fundamentals_history,
     get_ticker_filings,
     get_ticker_overview,
+    get_universe_table,
     list_active_tickers,
     parse_json_blob,
 )
@@ -666,6 +667,110 @@ def _render_ticker_overview(db_path: str, ticker: str):
             _render_etf_holdings_tab(ticker, db_path)
 
 
+def _render_universe_screener(db_path: str):
+    _section_header(
+        "Universe screener",
+        "Every active stock and ETF with scores, valuation, and drawdown-history stats side by side. "
+        "Click a column header to sort; use the filters below to narrow the list first.",
+    )
+    universe_df = get_universe_table(db_path=db_path)
+    if universe_df.empty:
+        st.info("No active tickers found.")
+        return
+
+    filter_cols = st.columns([1, 1, 2])
+    with filter_cols[0]:
+        asset_filter = st.radio("Asset type", ["All", "Stock", "ETF"], horizontal=True, key="screener_asset_type")
+    with filter_cols[1]:
+        only_with_scores = st.checkbox("Only show tickers with a snapshot", value=True)
+    with filter_cols[2]:
+        search = st.text_input("Search ticker, name, or sector", value="", key="screener_search")
+
+    filtered = universe_df
+    if asset_filter != "All":
+        filtered = filtered[filtered["asset_type"] == asset_filter]
+    if only_with_scores:
+        filtered = filtered[filtered["price"].notna()]
+    if search.strip():
+        term = search.strip().lower()
+        filtered = filtered[
+            filtered["ticker"].str.lower().str.contains(term)
+            | filtered["name"].str.lower().str.contains(term, na=False)
+            | filtered["sector"].str.lower().str.contains(term, na=False)
+        ]
+
+    st.caption(f"{len(filtered)} of {len(universe_df)} active tickers shown.")
+
+    display_df = filtered.copy()
+    display_df["updated_at"] = display_df["updated_at"].map(_format_dt)
+    display_df = display_df.rename(
+        columns={
+            "ticker": "Ticker",
+            "name": "Name",
+            "asset_type": "Type",
+            "sector": "Sector",
+            "market_cap": "Market cap ($B)",
+            "price": "Price",
+            "price_change_1d": "1D change %",
+            "high_52w": "52W high",
+            "low_52w": "52W low",
+            "current_drawdown_pct": "Current drawdown %",
+            "max_drawdown_1y_pct": "Max drawdown (1Y) %",
+            "pe_ratio": "PE",
+            "dividend_yield_pct": "Dividend yield %",
+            "quality_score": "Quality score",
+            "investment_score": "Investment score",
+            "risk_score": "Risk score",
+            "insider_sentiment_score": "Insider sentiment",
+            "drawdown_opportunity_score": "Drawdown opportunity",
+            "distress_risk_level": "Distress risk",
+            "valuation_tier": "Valuation tier",
+            "investment_verdict": "Verdict",
+            "completed_drawdowns": "Completed drawdowns",
+            "avg_drawdown_pct": "Avg drawdown %",
+            "worst_drawdown_pct": "Worst drawdown %",
+            "avg_recovery_days": "Avg recovery (days)",
+            "longest_recovery_days": "Longest recovery (days)",
+            "updated_at": "Updated at",
+        }
+    )
+
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Market cap ($B)": st.column_config.NumberColumn(format="%.1f"),
+            "Price": st.column_config.NumberColumn(format="$%.2f"),
+            "1D change %": st.column_config.NumberColumn(format="%.2f%%"),
+            "52W high": st.column_config.NumberColumn(format="$%.2f"),
+            "52W low": st.column_config.NumberColumn(format="$%.2f"),
+            "Current drawdown %": st.column_config.NumberColumn(format="%.2f%%"),
+            "Max drawdown (1Y) %": st.column_config.NumberColumn(format="%.2f%%"),
+            "PE": st.column_config.NumberColumn(format="%.2f"),
+            "Dividend yield %": st.column_config.NumberColumn(format="%.2f%%"),
+            "Quality score": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%d"),
+            "Investment score": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%d"),
+            "Risk score": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%d"),
+            "Insider sentiment": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%d"),
+            "Drawdown opportunity": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%d"),
+            "Avg drawdown %": st.column_config.NumberColumn(format="%.2f%%"),
+            "Worst drawdown %": st.column_config.NumberColumn(format="%.2f%%"),
+            "Avg recovery (days)": st.column_config.NumberColumn(format="%.0f"),
+            "Longest recovery (days)": st.column_config.NumberColumn(format="%d"),
+        },
+        height=600,
+    )
+
+    st.caption(
+        "\"Worst recovery\" has no single date -- use Worst drawdown % (deepest episode) and "
+        "Longest recovery (days) (slowest episode to fully recover) together to gauge tail risk."
+    )
+
+    csv_bytes = filtered.to_csv(index=False).encode("utf-8")
+    st.download_button("Download filtered rows as CSV", data=csv_bytes, file_name="universe_screener.csv", mime="text/csv")
+
+
 def _render_pipeline_runs(db_path: str):
     runs = get_pipeline_runs(db_path=db_path, limit=25)
     _section_header("Pipeline run history", "Latest executions recorded in SQLite.")
@@ -774,7 +879,10 @@ def main():
         st.write("Source: SQLite")
         st.write(f"DB: {db_path}")
 
-    overview_tab, runs_tab = st.tabs(["Ticker overview", "Run history"])
+    screener_tab, overview_tab, runs_tab = st.tabs(["Universe screener", "Ticker overview", "Run history"])
+
+    with screener_tab:
+        _render_universe_screener(db_path)
 
     with overview_tab:
         _render_ticker_overview(db_path, ticker)

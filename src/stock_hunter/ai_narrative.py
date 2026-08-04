@@ -661,6 +661,115 @@ def score_risk_factors(text: str, label: str = "risk_factors") -> dict:
     
     return {"score": score, "summary": summary, "sentiment": sentiment}
 
+CONCENTRATION_PROMPT = """
+You are an expert equity analyst assessing structural concentration risk from a 10-K/10-Q filing's
+risk-factor and MD&A text -- the kind of risk that isn't about the broader economy, but about this
+specific company depending heavily on a small number of products, customers, suppliers, or a single
+geographic region for its manufacturing or sales. Examples: a single product representing the majority
+of revenue, a handful of customers representing a large share of sales, manufacturing concentrated with
+one supplier or in one country/region.
+
+Given the following text, produce:
+1. A concentration_score from 0 (highly diversified, no material concentration) to 100 (severe
+   concentration in one product/customer/supplier/region).
+2. A one-sentence (max 200 characters) plain-English summary of the specific concentration disclosed,
+   if any (e.g., "Manufacturing concentrated with contract manufacturers in Taiwan and China").
+3. A concentration_type: one of "product", "customer", "supplier", "geographic", "none".
+
+If the text does not disclose any material concentration, return concentration_score 0, an empty
+summary, and concentration_type "none". Do not invent concentration that isn't stated in the text.
+
+Return ONLY a JSON object with keys "concentration_score", "summary", and "concentration_type".
+
+Text:
+"""
+
+
+# Keyword-anchored excerpt extraction, not blind truncation: 10-K risk-factor
+# sections open with several paragraphs of generic macro/industry boilerplate
+# before reaching company-specific concentration disclosures, which are often
+# further in. Simply sending the first N characters (as every other narrative
+# scorer in this file does) reliably misses that material -- verified against
+# a real AAPL 10-K, where a genuine supplier-concentration disclosure was
+# present in the stored text but outside a naive first-4000-char window.
+_CONCENTRATION_KEYWORDS = [
+    "concentrat", "single supplier", "limited number of suppliers", "sole source",
+    "single customer", "few customers", "customers represent", "top customer",
+    "single product", "one product", "primary product", "majority of our revenue",
+    "majority of the company's", "depend on a limited number", "outsourcing partner",
+    "contract manufactur", "single geographic", "single region", "single country",
+]
+
+
+def _extract_concentration_context(text, keywords=None, window=400, max_len=4000):
+    """Find every keyword hit in the FULL text (not just a truncated prefix)
+    and return merged excerpts around each hit, capped at max_len. Returns
+    empty string if no keyword appears anywhere -- a much more trustworthy
+    "no signal" than blindly truncating and hoping the relevant sentence
+    happened to be near the top."""
+    if not text:
+        return ""
+    keywords = keywords or _CONCENTRATION_KEYWORDS
+    lower = text.lower()
+    spans = []
+    for kw in keywords:
+        start = 0
+        while True:
+            idx = lower.find(kw, start)
+            if idx == -1:
+                break
+            spans.append((max(0, idx - window), min(len(text), idx + len(kw) + window)))
+            start = idx + len(kw)
+    if not spans:
+        return ""
+    spans.sort()
+    merged = [spans[0]]
+    for s, e in spans[1:]:
+        last_s, last_e = merged[-1]
+        if s <= last_e:
+            merged[-1] = (last_s, max(last_e, e))
+        else:
+            merged.append((s, e))
+    excerpt = "\n...\n".join(text[s:e] for s, e in merged)
+    return excerpt[:max_len]
+
+
+def score_concentration_risk(risk_text: str, mda_text: str = "", label: str = "concentration_risk") -> dict:
+    """Structural concentration risk (product/customer/supplier/geographic), extracted from the
+    same risk-factor and MD&A text already fetched for other narrative scoring -- no new data
+    source required. Returns {"concentration_score": int, "summary": str, "concentration_type": str}.
+    """
+    combined_text = f"{risk_text or ''}\n\n{mda_text or ''}".strip()
+    if not combined_text:
+        return {"concentration_score": 0, "summary": "No risk factors or MD&A provided.", "concentration_type": "none"}
+
+    excerpt = _extract_concentration_context(combined_text)
+    if not excerpt:
+        # No concentration-signaling language anywhere in the available text
+        # (not just the first N characters) -- a genuine negative, not an
+        # LLM call we'd otherwise waste on text with no relevant signal.
+        return {"concentration_score": 0, "summary": "", "concentration_type": "none"}
+
+    if not _llm_backend_available():
+        raise RuntimeError(f"LLM backend unavailable for [{label}]")
+
+    prompt = CONCENTRATION_PROMPT + excerpt
+    repair_prompt = (
+        prompt
+        + "\n\nSTRICT REPAIR INSTRUCTION: return only a valid JSON object with keys "
+        + '"concentration_score", "summary", and "concentration_type". No prose, no markdown, no code fences.'
+    )
+    data = _chat_completion_json([{"role": "user", "content": prompt}], label, repair_prompt)
+
+    score = max(0, min(100, int(data.get("concentration_score", 0))))
+    summary = _truncate(data.get("summary", ""), 200)
+    concentration_type = data.get("concentration_type", "none")
+    if concentration_type not in ("product", "customer", "supplier", "geographic", "none"):
+        concentration_type = "none"
+
+    return {"concentration_score": score, "summary": summary, "concentration_type": concentration_type}
+
+
 def get_comprehensive_narrative_analysis(risk_text, mda_text, legal_text,
                                          commitments_text, buybacks_text,
                                          liquidity_text, subsequent_text,

@@ -137,6 +137,60 @@ def list_active_tickers(db_path: str = DEFAULT_DB_PATH) -> pd.DataFrame:
     )
 
 
+def get_universe_table(db_path: str = DEFAULT_DB_PATH) -> pd.DataFrame:
+    """One row per active ticker, joining live snapshot scores/valuation with
+    drawdown-history summary stats -- built for sorting/screening across the
+    whole universe rather than drilling into a single ticker."""
+    df = fetch_dataframe(
+        """
+        SELECT
+            u.ticker,
+            u.name,
+            u.asset_type,
+            u.sector,
+            u.market_cap,
+            ds.price,
+            ds.price_change_1d,
+            ds.high_52w,
+            ds.low_52w,
+            ds.current_drawdown_pct,
+            ds.max_drawdown_1y_pct,
+            ds.pe_ratio,
+            ds.dividend_yield_pct,
+            ds.quality_score,
+            ds.investment_score,
+            ds.risk_score,
+            ds.insider_sentiment_score,
+            ds.drawdown_opportunity_score,
+            ds.distress_risk_level,
+            ds.valuation_tier,
+            ds.investment_verdict,
+            dsum.completed_drawdowns,
+            dsum.avg_drawdown_pct,
+            dsum.worst_drawdown_pct,
+            dsum.avg_recovery_days,
+            dsum.longest_recovery_days,
+            ds.updated_at
+        FROM universe u
+        LEFT JOIN daily_snapshot ds ON ds.ticker = u.ticker
+        LEFT JOIN drawdown_summary dsum ON dsum.ticker = u.ticker
+        WHERE u.status = 'active'
+        ORDER BY u.ticker
+        """,
+        db_path=db_path,
+    )
+    return _normalize_numeric_columns(
+        df,
+        [
+            "market_cap", "price", "price_change_1d", "high_52w", "low_52w",
+            "current_drawdown_pct", "max_drawdown_1y_pct", "pe_ratio", "dividend_yield_pct",
+            "quality_score", "investment_score", "risk_score", "insider_sentiment_score",
+            "drawdown_opportunity_score", "completed_drawdowns", "avg_drawdown_pct",
+            "worst_drawdown_pct", "avg_recovery_days", "longest_recovery_days",
+        ],
+    )
+
+
 def get_ticker_overview(ticker: str, db_path: str = DEFAULT_DB_PATH) -> pd.DataFrame:
     df = fetch_dataframe(
         """

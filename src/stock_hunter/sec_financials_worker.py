@@ -22,6 +22,7 @@ from .ai_narrative import (
     summarize_liquidity,
     summarize_subsequent,
     get_comprehensive_narrative_analysis,
+    score_concentration_risk,
 )
 
 SEC_USER_AGENT = "DrawdownAnalyzer Research research@drawdownanalyzer.com"
@@ -697,6 +698,14 @@ def _process_llm_narrative_row(conn, cursor, row) -> bool:
     else:
         comprehensive_summary = []
 
+    # Structural concentration risk (product/customer/supplier/geographic) --
+    # reuses the same risk_text/mda_text already fetched above, no new SEC data.
+    concentration_result = _llm_call_or_fallback(
+        lambda: score_concentration_risk(risk_text, mda_text, label=f"{ticker} {form_type} {filing_date} concentration"),
+        {"concentration_score": None, "summary": _LLM_FAILURE_MARKER, "concentration_type": "none"},
+        f"{ticker} {form_type} {filing_date} concentration",
+    )
+
     # Prepare update
     update_sql = """
         UPDATE sec_financials SET
@@ -705,7 +714,10 @@ def _process_llm_narrative_row(conn, cursor, row) -> bool:
             risk_sentiment = ?,
             md_a_summary = ?,
             full_sentiment = ?,
-            comprehensive_summary = ?
+            comprehensive_summary = ?,
+            concentration_risk_score = ?,
+            concentration_risk_summary = ?,
+            concentration_risk_type = ?
         WHERE rowid = ?
     """
     # Ensure md_a_summary is a string (list of bullets -> join with space or take first?)
@@ -736,6 +748,13 @@ def _process_llm_narrative_row(conn, cursor, row) -> bool:
     except Exception:
         comp_json = "[]"
 
+    concentration_summary_str = concentration_result.get("summary", "")
+    if len(concentration_summary_str) > 200:
+        concentration_summary_str = concentration_summary_str[:200]
+    concentration_type_str = concentration_result.get("concentration_type", "none")
+    if concentration_type_str not in ("product", "customer", "supplier", "geographic", "none"):
+        concentration_type_str = "none"
+
     cursor.execute(
         update_sql,
         (
@@ -745,6 +764,9 @@ def _process_llm_narrative_row(conn, cursor, row) -> bool:
             md_a_summary_str,
             overall_sentiment,
             comp_json,
+            concentration_result.get("concentration_score"),
+            concentration_summary_str,
+            concentration_type_str,
             rowid,
         ),
     )
