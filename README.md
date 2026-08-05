@@ -689,10 +689,12 @@ ETFs rarely look as "beaten down" as individual stocks do on that metric -- they
 under `covered_call`, which ranks by `investment_score` instead. Raise `--pool-size` to see more ETF
 candidates ranked further down the list.
 
-**Liquidity floor (`--min-open-interest`, default 100):** every leg of every candidate must individually
-clear this open-interest minimum -- a widely-cited practitioner threshold (spreads commonly blow out past
-10-20% of the option's value below ~100 OI). Applies to both legs of a `put_credit_spread`, not just the
-short leg.
+**Liquidity floor (`--min-open-interest`, default 20):** every leg of every candidate must individually
+clear this open-interest minimum. ~100 OI is the widely-cited practitioner threshold (spreads commonly
+blow out past 10-20% of the option's value below it), but the default here is deliberately lower to admit
+thinner names -- fills are still possible below 100, just less reliably at a fair price. Treat thin OI as
+a liquidity warning to weigh yourself, not a hard fill guarantee either way. Applies to both legs of a
+`put_credit_spread`, not just the short leg.
 
 **Considered but not built -- IV Rank:** the standard practitioner rule for "is premium rich enough to
 sell" (tastytrade-style: sell when IV Rank > 50, i.e. current IV is in the upper half of its own trailing

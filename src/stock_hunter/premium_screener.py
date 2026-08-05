@@ -82,11 +82,14 @@ VIX_TICKER = "^VIX"
 VIX_PAUSE_THRESHOLD = 30  # elevated/crisis-level volatility
 
 # ---- liquidity filter ---------------------------------------------------
-# Below ~100 open interest, bid/ask spreads commonly blow out past 10-20% of
-# the option's value, and closing a position can be difficult at a fair
-# price -- a widely-cited practitioner threshold for options sellers. Applies
-# to every leg (both legs of a spread must individually clear the bar).
-MIN_OPEN_INTEREST = 100
+# ~100 open interest is the widely-cited practitioner threshold for options
+# sellers (below it, bid/ask spreads commonly blow out past 10-20% of the
+# option's value and closing a position can be difficult at a fair price).
+# Lowered to 20 deliberately to admit thinner names -- fills are still
+# possible below 100, just less reliably at a fair price, and thin OI here
+# is a liquidity *warning*, not a hard fill guarantee either way. Applies to
+# every leg (both legs of a spread must individually clear the bar).
+MIN_OPEN_INTEREST = 20
 
 STRATEGIES = {
     "cash_secured_put": {

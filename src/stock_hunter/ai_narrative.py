@@ -140,7 +140,10 @@ def _get_gemini_model() -> str:
     # `or` rather than the getenv(name, default) form -- GitHub Actions substitutes
     # an empty string for a declared-but-unset secret, and that empty value would
     # otherwise win over the default (this exact pattern broke NVIDIA_NIM_MODEL once).
-    return os.getenv("GEMINI_MODEL") or "gemini-2.0-flash"
+    # gemma-4-31b-it chosen over gemini-2.0-flash because the account's free-tier
+    # quota for gemini-2.0-flash was 0/0 (confirmed via HTTP 429 "limit: 0"); the
+    # Gemma tier had real quota (30 RPM / 14.4K RPD per the account's rate-limit page).
+    return os.getenv("GEMINI_MODEL") or "gemma-4-31b-it"
 
 
 def _get_gemini_base() -> str:
@@ -409,9 +412,12 @@ _last_request_time_by_provider: Dict[str, float] = {}
 def _throttle_provider(provider: str):
     provider = provider.strip().lower()
     if provider == "gemini":
-        # Gemini free-tier flash models cap around 15 requests/min (~0.25 rps);
-        # 0.2 rps default leaves headroom, matching the pace already used for
-        # other providers in this file.
+        # Confirmed via the account's actual rate-limit page: gemma-4-31b-it
+        # (the concentration-scoring model) allows 30 RPM / 14.4K RPD, well
+        # above this default -- 0.2 rps just keeps the same conservative pace
+        # used for other providers in this file, with plenty of headroom to
+        # raise via GEMINI_MAX_RPS if a full run's runtime matters more than
+        # staying maximally conservative.
         rps = max(_env_float("GEMINI_MAX_RPS", 0.2), 0.0)
         min_interval = (1.0 / rps) if rps > 0 else 0.0
     else:
@@ -612,10 +618,11 @@ def _call_cohere(messages: List[Dict[str, Any]], api_key: str) -> str:
     return content
 
 def _call_gemini(messages: List[Dict[str, Any]], api_key: str, model: str | None = None, temperature: float | None = None) -> str:
-    """Gemini's generateContent endpoint has its own request/response shape
-    (contents/parts, not OpenAI-style messages/choices), so it can't go
-    through _call_openai_like. Only used for the concentration-risk voting
-    calls, not the primary narrative provider."""
+    """generateContent has its own request/response shape (contents/parts,
+    not OpenAI-style messages/choices), so it can't go through
+    _call_openai_like. Serves both Gemini and Gemma models (GEMINI_MODEL can
+    point at either) -- only used for concentration-risk scoring, not the
+    primary narrative provider."""
     if requests is None:
         raise RuntimeError("requests is unavailable")
 
@@ -632,8 +639,18 @@ def _call_gemini(messages: List[Dict[str, Any]], api_key: str, model: str | None
             "contents": [{"role": "user", "parts": [{"text": prompt_text}]}],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": _env_int("NARRATIVE_MAX_TOKENS", 800),
-                "responseMimeType": "application/json",
+                # Deliberately NOT reusing NARRATIVE_MAX_TOKENS (800): thinking-capable
+                # models (verified against gemma-4-31b-it) spend a large, non-optional
+                # chunk of this budget on an internal reasoning trace before the real
+                # answer -- a real concentration-risk prompt used ~1134 thinking tokens
+                # plus ~63 answer tokens, so 800 would truncate mid-reasoning and never
+                # reach the answer at all.
+                "maxOutputTokens": _env_int("GEMINI_MAX_TOKENS", 4000),
+                # No responseMimeType: "application/json" here -- that structured-output
+                # mode isn't guaranteed to be supported by every model this can point at
+                # (e.g. Gemma variants). The prompt's own "return ONLY JSON" instruction
+                # plus the existing strip-code-fences + repair-retry parsing (same as
+                # every other provider in this file) covers it instead.
             },
         },
         timeout=90,
@@ -649,7 +666,15 @@ def _call_gemini(messages: List[Dict[str, Any]], api_key: str, model: str | None
         detail = f", blockReason={block_reason}" if block_reason else ""
         raise RuntimeError(f"Empty response from Gemini (no candidates{detail})")
     parts = (candidates[0].get("content") or {}).get("parts") or []
-    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+    # Thinking-capable models (verified against gemma-4-31b-it) return their
+    # internal reasoning as a separate part with "thought": true ahead of the
+    # real answer part. That reasoning text often contains its own example
+    # braces/JSON snippets, which would corrupt the {..} span our JSON parser
+    # looks for if concatenated in -- so only the non-thought parts count as
+    # the actual response.
+    text = "".join(
+        p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought")
+    )
     if not text:
         raise RuntimeError("Empty response from Gemini")
     return text
@@ -825,12 +850,6 @@ def _extract_concentration_context(text, keywords=None, window=400, max_len=4000
     return excerpt[:max_len]
 
 
-# Below this score, a vote is treated as "no material concentration found";
-# at/above it, the vote is treated as "flagged". Used to decide which cluster
-# of votes is the majority in _combine_concentration_votes.
-_CONCENTRATION_FLAG_THRESHOLD = 20
-
-
 def _parse_concentration_payload(data: dict) -> dict:
     score = max(0, min(100, int(data.get("concentration_score", 0))))
     summary = _truncate(data.get("summary", ""), 200)
@@ -838,26 +857,6 @@ def _parse_concentration_payload(data: dict) -> dict:
     if concentration_type not in ("product", "customer", "supplier", "geographic", "none"):
         concentration_type = "none"
     return {"concentration_score": score, "summary": summary, "concentration_type": concentration_type}
-
-
-def _combine_concentration_votes(votes: list) -> dict:
-    """votes is a list of (source_label, parsed_dict). A single small free
-    model (llama-3.1-8b) was observed defaulting to a generic 'none' verdict
-    even when the input text plainly contained concentration language, so a
-    single call can't be trusted alone. With >=3 votes, the majority cluster
-    (flagged vs. not-flagged) wins; with fewer, we lean toward the flagged
-    cluster if any vote flagged something, since a missed concentration risk
-    is worse for this tool's purpose than a false alarm. Within the winning
-    cluster, the highest-scoring vote's score/summary/type is returned."""
-    flagged = [v for _, v in votes if v["concentration_score"] >= _CONCENTRATION_FLAG_THRESHOLD]
-    not_flagged = [v for _, v in votes if v["concentration_score"] < _CONCENTRATION_FLAG_THRESHOLD]
-
-    if len(votes) >= 3:
-        majority = flagged if len(flagged) > len(not_flagged) else not_flagged
-    else:
-        majority = flagged if flagged else not_flagged
-
-    return max(majority, key=lambda v: v["concentration_score"])
 
 
 def _call_and_parse_json_gemini(messages: list, repair_prompt: str, label: str, temperature: float) -> dict:
@@ -885,19 +884,18 @@ def score_concentration_risk(risk_text: str, mda_text: str = "", business_text: 
     new data source required. Business text is included because segment/product/geographic revenue
     mix is usually narratively disclosed there, not in risk factors or MD&A.
 
-    Votes across up to 3 independent LLM calls (the primary configured provider plus, when
-    GEMINI_API_KEY is set, two Gemini calls at different temperatures) and combines them via
-    _combine_concentration_votes, rather than trusting a single call -- see that function's
-    docstring for why single-call scores from small free models weren't reliable enough.
+    Scored by a single Gemini call (GEMINI_MODEL, e.g. a Gemma flash-lite tier with a high daily
+    quota) when GEMINI_API_KEY is set -- a small free model on the primary provider (nim) was
+    observed defaulting to a generic "none" verdict even when the input text plainly contained
+    concentration language, so this is intentionally routed to a separate, more reliable model
+    rather than trusting the primary provider. Falls back to the primary provider only when no
+    Gemini key is configured, so this still works without one.
 
     Returns {"concentration_score": int, "summary": str, "concentration_type": str}.
     """
     combined_text = f"{business_text or ''}\n\n{risk_text or ''}\n\n{mda_text or ''}".strip()
     if not combined_text:
         return {"concentration_score": 0, "summary": "No risk factors or MD&A provided.", "concentration_type": "none"}
-
-    if not _llm_backend_available():
-        raise RuntimeError(f"LLM backend unavailable for [{label}]")
 
     # Prefer the keyword-anchored excerpt when concentration-signaling
     # language is found anywhere in the text (better-targeted than blind
@@ -918,38 +916,18 @@ def score_concentration_risk(risk_text: str, mda_text: str = "", business_text: 
     )
     messages = [{"role": "user", "content": prompt}]
 
-    votes = []
-
-    primary_provider = _get_provider()
-    try:
-        data = _chat_completion_json(messages, label, repair_prompt)
-        votes.append((primary_provider, _parse_concentration_payload(data)))
-    except Exception as exc:
-        warning(f"Concentration vote call failed [{label}] provider={primary_provider}: {exc}")
-
     if _get_gemini_key():
-        for i, temperature in enumerate((0.0, _env_float("CONCENTRATION_VOTE_TEMPERATURE", 0.4))):
-            source = f"gemini-{i + 1}"
-            vote_label = f"{label} [{source}]"
-            try:
-                _throttle_provider("gemini")
-                data = _call_and_parse_json_gemini(messages, repair_prompt, vote_label, temperature)
-                votes.append((source, _parse_concentration_payload(data)))
-            except Exception as exc:
-                warning(f"Concentration vote call failed [{vote_label}]: {exc}")
-    else:
-        info(f"GEMINI_API_KEY not set; concentration scoring for [{label}] uses only {primary_provider}")
-
-    if not votes:
-        raise RuntimeError(f"All concentration vote calls failed for [{label}]")
-
-    result = _combine_concentration_votes(votes)
-    if len(votes) > 1:
-        info(
-            f"Concentration vote [{label}]: "
-            f"{[(source, v['concentration_score']) for source, v in votes]} -> final={result['concentration_score']}"
+        _throttle_provider("gemini")
+        data = _call_and_parse_json_gemini(
+            messages, repair_prompt, label, temperature=_env_float("NARRATIVE_TEMPERATURE", 0.0)
         )
-    return result
+        return _parse_concentration_payload(data)
+
+    if not _llm_backend_available():
+        raise RuntimeError(f"LLM backend unavailable for [{label}]")
+    info(f"GEMINI_API_KEY not set; concentration scoring for [{label}] uses primary provider ({_get_provider()})")
+    data = _chat_completion_json(messages, label, repair_prompt)
+    return _parse_concentration_payload(data)
 
 
 def get_comprehensive_narrative_analysis(risk_text, mda_text, legal_text,
