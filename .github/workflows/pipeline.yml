@@ -59,6 +59,16 @@ jobs:
           COHERE_API_BASE: ${{ secrets.COHERE_API_BASE }}
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
           NVIDIA_NIM_API_BASE: ${{ secrets.NVIDIA_NIM_API_BASE }}
+          # Second, independent LLM used only for concentration-risk voting
+          # (ai_narrative.py score_concentration_risk) -- not a fallback
+          # provider, additive to whichever NARRATIVE_PROVIDER is primary.
+          # GEMINI_MODEL/GEMINI_API_BASE use `os.getenv(name) or default` in
+          # code (not the getenv(name, default) form), so it's safe for these
+          # lines to exist even before the secret is created.
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          GEMINI_API_BASE: ${{ secrets.GEMINI_API_BASE }}
+          GEMINI_MAX_RPS: ${{ secrets.GEMINI_MAX_RPS }}
         run: |
           set -euo pipefail
           python -u -m stock_hunter.service 2>&1 | tee pipeline_run.log

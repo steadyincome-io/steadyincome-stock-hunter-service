@@ -130,9 +130,27 @@ def _get_nim_key() -> str:
     return os.getenv("NVIDIA_NIM_API_KEY", "")
 
 
-def _get_min_interval_sec() -> float:
+def _get_gemini_key() -> str:
     _ensure_env_loaded()
-    provider = _get_provider()
+    return os.getenv("GEMINI_API_KEY", "")
+
+
+def _get_gemini_model() -> str:
+    _ensure_env_loaded()
+    # `or` rather than the getenv(name, default) form -- GitHub Actions substitutes
+    # an empty string for a declared-but-unset secret, and that empty value would
+    # otherwise win over the default (this exact pattern broke NVIDIA_NIM_MODEL once).
+    return os.getenv("GEMINI_MODEL") or "gemini-2.0-flash"
+
+
+def _get_gemini_base() -> str:
+    _ensure_env_loaded()
+    return os.getenv("GEMINI_API_BASE") or "https://generativelanguage.googleapis.com/v1beta"
+
+
+def _get_min_interval_sec(provider: str | None = None) -> float:
+    _ensure_env_loaded()
+    provider = (provider or _get_provider()).strip().lower()
     if "NARRATIVE_MAX_RPS" in os.environ:
         rps = max(_env_float("NARRATIVE_MAX_RPS", 1.0), 0.0)
     else:
@@ -381,6 +399,31 @@ def _throttle_narrative_requests():
         time.sleep(min_interval - elapsed)
     _last_narrative_request_time = time.time()
 
+
+# Separate from the primary-provider throttle above: used for the extra
+# concentration-risk voting calls (Gemini), which run alongside whatever the
+# primary provider is and need their own independent rate limit.
+_last_request_time_by_provider: Dict[str, float] = {}
+
+
+def _throttle_provider(provider: str):
+    provider = provider.strip().lower()
+    if provider == "gemini":
+        # Gemini free-tier flash models cap around 15 requests/min (~0.25 rps);
+        # 0.2 rps default leaves headroom, matching the pace already used for
+        # other providers in this file.
+        rps = max(_env_float("GEMINI_MAX_RPS", 0.2), 0.0)
+        min_interval = (1.0 / rps) if rps > 0 else 0.0
+    else:
+        min_interval = _get_min_interval_sec(provider)
+    if min_interval <= 0:
+        return
+    last = _last_request_time_by_provider.get(provider, 0.0)
+    elapsed = time.time() - last
+    if elapsed < min_interval:
+        time.sleep(min_interval - elapsed)
+    _last_request_time_by_provider[provider] = time.time()
+
 def _prompt_from_messages(messages: List[Dict[str, Any]]) -> str:
     parts = []
     for message in messages:
@@ -568,6 +611,50 @@ def _call_cohere(messages: List[Dict[str, Any]], api_key: str) -> str:
         raise RuntimeError("Empty response from Cohere")
     return content
 
+def _call_gemini(messages: List[Dict[str, Any]], api_key: str, model: str | None = None, temperature: float | None = None) -> str:
+    """Gemini's generateContent endpoint has its own request/response shape
+    (contents/parts, not OpenAI-style messages/choices), so it can't go
+    through _call_openai_like. Only used for the concentration-risk voting
+    calls, not the primary narrative provider."""
+    if requests is None:
+        raise RuntimeError("requests is unavailable")
+
+    model = model or _get_gemini_model()
+    if temperature is None:
+        temperature = _env_float("NARRATIVE_TEMPERATURE", 0.0)
+    prompt_text = _prompt_from_messages(messages)
+
+    response = requests.post(
+        f"{_get_gemini_base().rstrip('/')}/models/{model}:generateContent",
+        params={"key": api_key},
+        headers={"Content-Type": "application/json"},
+        json={
+            "contents": [{"role": "user", "parts": [{"text": prompt_text}]}],
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": _env_int("NARRATIVE_MAX_TOKENS", 800),
+                "responseMimeType": "application/json",
+            },
+        },
+        timeout=90,
+    )
+    try:
+        response.raise_for_status()
+    except Exception:
+        _raise_http_error(response, "Gemini")
+    data = response.json()
+    candidates = data.get("candidates") or []
+    if not candidates:
+        block_reason = (data.get("promptFeedback") or {}).get("blockReason")
+        detail = f", blockReason={block_reason}" if block_reason else ""
+        raise RuntimeError(f"Empty response from Gemini (no candidates{detail})")
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+    if not text:
+        raise RuntimeError("Empty response from Gemini")
+    return text
+
+
 def _route_chat_completion(messages: List[Dict[str, Any]], provider: str | None = None) -> str:
     provider = (provider or _get_provider()).strip().lower()
     if provider == "cohere":
@@ -738,11 +825,71 @@ def _extract_concentration_context(text, keywords=None, window=400, max_len=4000
     return excerpt[:max_len]
 
 
+# Below this score, a vote is treated as "no material concentration found";
+# at/above it, the vote is treated as "flagged". Used to decide which cluster
+# of votes is the majority in _combine_concentration_votes.
+_CONCENTRATION_FLAG_THRESHOLD = 20
+
+
+def _parse_concentration_payload(data: dict) -> dict:
+    score = max(0, min(100, int(data.get("concentration_score", 0))))
+    summary = _truncate(data.get("summary", ""), 200)
+    concentration_type = data.get("concentration_type", "none")
+    if concentration_type not in ("product", "customer", "supplier", "geographic", "none"):
+        concentration_type = "none"
+    return {"concentration_score": score, "summary": summary, "concentration_type": concentration_type}
+
+
+def _combine_concentration_votes(votes: list) -> dict:
+    """votes is a list of (source_label, parsed_dict). A single small free
+    model (llama-3.1-8b) was observed defaulting to a generic 'none' verdict
+    even when the input text plainly contained concentration language, so a
+    single call can't be trusted alone. With >=3 votes, the majority cluster
+    (flagged vs. not-flagged) wins; with fewer, we lean toward the flagged
+    cluster if any vote flagged something, since a missed concentration risk
+    is worse for this tool's purpose than a false alarm. Within the winning
+    cluster, the highest-scoring vote's score/summary/type is returned."""
+    flagged = [v for _, v in votes if v["concentration_score"] >= _CONCENTRATION_FLAG_THRESHOLD]
+    not_flagged = [v for _, v in votes if v["concentration_score"] < _CONCENTRATION_FLAG_THRESHOLD]
+
+    if len(votes) >= 3:
+        majority = flagged if len(flagged) > len(not_flagged) else not_flagged
+    else:
+        majority = flagged if flagged else not_flagged
+
+    return max(majority, key=lambda v: v["concentration_score"])
+
+
+def _call_and_parse_json_gemini(messages: list, repair_prompt: str, label: str, temperature: float) -> dict:
+    api_key = _get_gemini_key()
+    info(f"LLM call start [{label}] provider=gemini model={_get_gemini_model()} temperature={temperature}")
+    _log_llm_request(label, messages)
+    raw = _call_gemini(messages, api_key, temperature=temperature)
+    _log_llm_response(label, raw)
+    success(f"LLM call done [{label}]")
+    try:
+        return _parse_json_response_or_raise(raw, label)
+    except Exception as exc:
+        _log_json_state(label, "failed", str(exc))
+        warning(f"LLM JSON parse failed [{label}]; retrying once with stricter JSON-only prompt")
+        repair_label = f"{label} repair"
+        _throttle_provider("gemini")
+        raw_repair = _call_gemini([{"role": "user", "content": repair_prompt}], api_key, temperature=temperature)
+        _log_llm_response(repair_label, raw_repair)
+        return _parse_json_response_or_raise(raw_repair, repair_label)
+
+
 def score_concentration_risk(risk_text: str, mda_text: str = "", business_text: str = "", label: str = "concentration_risk") -> dict:
     """Structural concentration risk (product/customer/supplier/geographic), extracted from the
     risk-factor, MD&A, and Item 1 Business text already fetched for other narrative scoring -- no
     new data source required. Business text is included because segment/product/geographic revenue
     mix is usually narratively disclosed there, not in risk factors or MD&A.
+
+    Votes across up to 3 independent LLM calls (the primary configured provider plus, when
+    GEMINI_API_KEY is set, two Gemini calls at different temperatures) and combines them via
+    _combine_concentration_votes, rather than trusting a single call -- see that function's
+    docstring for why single-call scores from small free models weren't reliable enough.
+
     Returns {"concentration_score": int, "summary": str, "concentration_type": str}.
     """
     combined_text = f"{business_text or ''}\n\n{risk_text or ''}\n\n{mda_text or ''}".strip()
@@ -769,15 +916,40 @@ def score_concentration_risk(risk_text: str, mda_text: str = "", business_text: 
         + "\n\nSTRICT REPAIR INSTRUCTION: return only a valid JSON object with keys "
         + '"concentration_score", "summary", and "concentration_type". No prose, no markdown, no code fences.'
     )
-    data = _chat_completion_json([{"role": "user", "content": prompt}], label, repair_prompt)
+    messages = [{"role": "user", "content": prompt}]
 
-    score = max(0, min(100, int(data.get("concentration_score", 0))))
-    summary = _truncate(data.get("summary", ""), 200)
-    concentration_type = data.get("concentration_type", "none")
-    if concentration_type not in ("product", "customer", "supplier", "geographic", "none"):
-        concentration_type = "none"
+    votes = []
 
-    return {"concentration_score": score, "summary": summary, "concentration_type": concentration_type}
+    primary_provider = _get_provider()
+    try:
+        data = _chat_completion_json(messages, label, repair_prompt)
+        votes.append((primary_provider, _parse_concentration_payload(data)))
+    except Exception as exc:
+        warning(f"Concentration vote call failed [{label}] provider={primary_provider}: {exc}")
+
+    if _get_gemini_key():
+        for i, temperature in enumerate((0.0, _env_float("CONCENTRATION_VOTE_TEMPERATURE", 0.4))):
+            source = f"gemini-{i + 1}"
+            vote_label = f"{label} [{source}]"
+            try:
+                _throttle_provider("gemini")
+                data = _call_and_parse_json_gemini(messages, repair_prompt, vote_label, temperature)
+                votes.append((source, _parse_concentration_payload(data)))
+            except Exception as exc:
+                warning(f"Concentration vote call failed [{vote_label}]: {exc}")
+    else:
+        info(f"GEMINI_API_KEY not set; concentration scoring for [{label}] uses only {primary_provider}")
+
+    if not votes:
+        raise RuntimeError(f"All concentration vote calls failed for [{label}]")
+
+    result = _combine_concentration_votes(votes)
+    if len(votes) > 1:
+        info(
+            f"Concentration vote [{label}]: "
+            f"{[(source, v['concentration_score']) for source, v in votes]} -> final={result['concentration_score']}"
+        )
+    return result
 
 
 def get_comprehensive_narrative_analysis(risk_text, mda_text, legal_text,

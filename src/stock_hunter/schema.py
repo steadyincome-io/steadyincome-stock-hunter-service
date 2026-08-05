@@ -316,6 +316,7 @@ DEFAULT_UNIVERSE = [
     ('WM', 'Waste Management Inc.', 'Stock', 'Industrials', 'Waste Management', 100.0),
     ('FDX', 'FedEx Corporation', 'Stock', 'Industrials', 'Integrated Freight & Logistics', 100.0),
     ('RSG', 'Republic Services Inc.', 'Stock', 'Industrials', 'Waste Management', 100.0),
+    ('SPCX', 'Space Exploration Technologies Corp.', 'Stock', 'Industrials', 'Aerospace & Defense', 1651.0),
 
     # Energy & Materials
     ('XOM', 'Exxon Mobil Corporation', 'Stock', 'Energy', 'Oil & Gas Integrated', 470.0),
