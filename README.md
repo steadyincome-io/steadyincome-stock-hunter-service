@@ -543,10 +543,10 @@ It requires:
 ## Weekly options premium screener
 
 `premium_screener.py` uses the pipeline's stored analytics plus a live `yfinance` lookup to shortlist
-stocks for short-dated premium-selling strategies (cash-secured puts, put credit spreads, covered
-calls). It is a screening aid for narrowing the universe, **not** a trade recommendation or profit
-guarantee -- it has no view on broad-market direction, true options-market liquidity beyond open
-interest, or position sizing.
+stocks **and ETFs** for short-dated premium-selling strategies (cash-secured puts, put credit spreads,
+covered calls). It is a screening aid for narrowing the universe, **not** a trade recommendation or
+profit guarantee -- it has no view on broad-market direction, true options-market liquidity beyond
+open interest, or position sizing.
 
 ```bash
 # Cash-secured put candidates (default strategy)
@@ -562,8 +562,12 @@ PYTHONPATH=src python -m stock_hunter.premium_screener --strategy put_credit_spr
 PYTHONPATH=src python -m stock_hunter.premium_screener --strategy put_credit_spread --short-otm-pct 0.08 --spread-width-strikes 3
 ```
 
-What it does, in order:
+What it does, in order (this is the actual execution order -- the code's own step numbering matches):
 
+0. **Macro/regime gate** (`cash_secured_put` / `put_credit_spread` only -- see "Macro/regime gates"
+   below for the full detail) -- before touching any individual ticker, checks whether the broad market
+   itself and VIX are healthy enough to sell bullish/neutral premium into. If either check fails, the
+   run stops immediately with `result["blocked_reason"]` set and nothing else below happens this cycle.
 1. **Avoid list** -- hard-excludes any ticker with `distress_scores.risk_level = 'Material solvency
    concerns'`, a bankruptcy-related 8-K in the trailing 180 days, or `daily_snapshot.risk_score >= 65`.
    Insider selling is intentionally **not** a hard exclude: this universe is mega-cap-only, where
@@ -574,9 +578,15 @@ What it does, in order:
    `#Sellers` / `InsSel$M` columns on every candidate so you can weigh it yourself -- it still
    contributes a small weight inside `daily_snapshot.risk_score` itself, so it isn't entirely ignored,
    just not treated as disqualifying on its own.
-2. **Strategy fit ranking** -- from what's left, ranks by `drawdown_opportunity_score` (cash-secured
-   puts / put credit spreads -- you want a name pulled back further than usual) or `investment_score`
-   (covered calls), after a minimum `quality_score` bar.
+2. **Strategy fit ranking + trend filter** -- from what's left, `cash_secured_put` and
+   `put_credit_spread` additionally require the live price to be above its trailing `--sma-period`
+   (default 50) day simple moving average (computed from stored `price_history`) -- both are
+   bullish/neutral strategies, so a name in a confirmed downtrend is rejected with the specific
+   price/SMA values shown, same as any other rejection reason. `covered_call` is exempt, since it's
+   often written specifically to generate income on a name that's lagging. Survivors are then ranked by
+   `drawdown_opportunity_score` (cash-secured puts / put credit spreads -- you want a name pulled back
+   further than usual) or `investment_score` (covered calls), after a minimum `quality_score` bar, and
+   the top `--pool-size` proceed to the more expensive per-ticker checks below.
 3. **Earnings exclusion** -- drops any candidate with an earnings date (via `yfinance`'s calendar)
    inside the next 7 days, since an earnings print is the most common way a short-dated premium trade
    blows up.
@@ -597,12 +607,6 @@ What it does, in order:
 5. **Correlation diversification** -- greedily selects the final candidate list so no two picks exceed
    a 0.70 trailing 90-day return correlation, avoiding a final list that's secretly one concentrated
    sector bet.
-
-**Trend filter:** `cash_secured_put` and `put_credit_spread` (both bullish/neutral -- you want the stock
-to stay flat-to-up) additionally require the live price to be above its trailing `--sma-period`
-(default 50) day simple moving average, computed from stored `price_history`. A name below its own SMA
-is rejected with the specific price/SMA values shown, same as any other rejection reason. `covered_call`
-is intentionally exempt -- it's often written specifically to generate income on a name that's lagging.
 
 **Probability of profit (`ProbOTM%`):** every candidate includes a Black-Scholes estimate of the
 probability that strike finishes out-of-the-money at expiration (for a put, price finishes above the
@@ -656,16 +660,53 @@ outsourcing partners in China, India, Taiwan"), extracted from the latest 10-K's
 text -- the same text already fetched for other narrative scoring, no new data source. Informational
 only, not a filter, for the same reason insider selling isn't a hard exclude: LLM-derived signals here
 are noisier than the numeric distress/risk scores. Detail text for any candidate scoring >= 30 prints
-below the table. Extraction uses a keyword-anchored excerpt of the full stored text rather than a naive
-first-N-characters truncation -- verified against a real AAPL 10-K where the actual disclosure was
-present but outside a blind truncation window; a plain prefix-based approach missed it, the
-keyword-anchored version caught it correctly.
+below the table.
+
+The LLM is **always called**, for every filing -- there is no keyword-based gate that skips the call and
+defaults to 0. An earlier version tried to save LLM calls by only asking when a keyword-anchored excerpt
+found concentration-signaling language anywhere in the text, defaulting to a "verified" 0 otherwise; in
+practice this meant 143 of 153 filings in one real run scored exactly 0 with the LLM never actually
+consulted, since the keyword list isn't exhaustive -- a 0 that looked authoritative but wasn't. The
+keyword-anchored excerpt is still used *when it finds a match* (better-targeted text than a blind prefix,
+verified against a real AAPL 10-K where the disclosure was present but outside a naive first-N-characters
+window), but when no keyword matches, the LLM still gets called on a plain prefix of the available text
+rather than being skipped -- every `ConcRisk` value, including 0, now reflects an actual LLM judgment.
+
+**ETF candidates:** ETFs are screened alongside stocks (previously stock-only), using the same avoid-list,
+SMA trend filter, macro gates, and liquidity floor. Two ETF-specific adjustments:
+- **Leveraged/inverse exclusion** -- any ETF whose name matches a leveraged/inverse pattern (2x/3x/Ultra/
+  Inverse/Bear/etc.) is hard-excluded. These products have well-documented structural volatility decay
+  from daily rebalancing (NAV erodes over multi-day holds even if the underlying index round-trips to its
+  starting price) that makes them generally unsuitable for premium-selling. None are in this project's
+  default universe today, but this guards against future additions.
+- **`ConcRisk` shows `N/A` for ETFs**, not a numeric 0 -- ETFs don't file 10-Ks, so there's no
+  risk-factor text to extract concentration disclosures from. A 0 would misleadingly read as "verified no
+  concentration" rather than "not applicable."
+
+In practice, ETFs pass the filters fine but don't always win a `--pool-size` slot for `cash_secured_put`/
+`put_credit_spread`, since those strategies rank candidates by `drawdown_opportunity_score` and broad
+ETFs rarely look as "beaten down" as individual stocks do on that metric -- they show up more often
+under `covered_call`, which ranks by `investment_score` instead. Raise `--pool-size` to see more ETF
+candidates ranked further down the list.
+
+**Liquidity floor (`--min-open-interest`, default 100):** every leg of every candidate must individually
+clear this open-interest minimum -- a widely-cited practitioner threshold (spreads commonly blow out past
+10-20% of the option's value below ~100 OI). Applies to both legs of a `put_credit_spread`, not just the
+short leg.
+
+**Considered but not built -- IV Rank:** the standard practitioner rule for "is premium rich enough to
+sell" (tastytrade-style: sell when IV Rank > 50, i.e. current IV is in the upper half of its own trailing
+1-year range) is genuinely different from what `IVprem`/`ProbOTM%` compute today (IV vs. 30-day realized
+vol, and a point-in-time Black-Scholes probability). True IV Rank needs a year of historical daily IV
+snapshots, which this project has never captured -- there's no way to compute it correctly today, and a
+lower-quality substitute wasn't worth shipping. Collecting daily IV snapshots going forward (so real IV
+Rank becomes available in a few months) is a reasonable follow-up if wanted.
 
 Known gaps: no true options-market depth/liquidity scoring beyond open interest, no sub-sector/thematic
 concentration check (e.g. "AI capex exposure" spanning multiple GICS sectors) beyond the per-company
-concentration signal above, and `yfinance`'s implied volatility/earnings-calendar/VIX data can
-occasionally be stale or missing for a given ticker (the screener logs and skips or fails open rather
-than failing the whole run).
+concentration signal above, no true IV Rank (see above), and `yfinance`'s implied volatility/earnings-
+calendar/VIX data can occasionally be stale or missing for a given ticker (the screener logs and skips
+or fails open rather than failing the whole run).
 
 ## Troubleshooting
 

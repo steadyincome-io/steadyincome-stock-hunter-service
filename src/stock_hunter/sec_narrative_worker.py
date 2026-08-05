@@ -1,10 +1,11 @@
 """
 sec_narrative_worker.py
 -----------------------
-Fetches the actual 10-Q HTML filing from SEC EDGAR and extracts qualitative
+Fetches the actual 10-K/10-Q HTML filing from SEC EDGAR and extracts qualitative
 narrative sections using heading-based text extraction.
 
 Sections extracted:
+  - Business (Item 1)
   - Management Discussion & Analysis (MD&A)
   - Risk Factors
   - Legal Proceedings
@@ -14,7 +15,8 @@ Sections extracted:
   - Subsequent Events
 
 Each section is stored as a JSON text blob (≤5,000 chars) in sec_financials.
-Only applies to 10-Q filings (10-K sections are too long to be useful at this limit).
+Runs against both 10-K and 10-Q filings; the LLM narrative-scoring pass
+currently only consumes the 10-K rows (see sec_financials_worker.py).
 """
 
 import re
@@ -53,6 +55,11 @@ def rate_limited_get(url, headers=HEADERS, timeout=15, min_interval=0.15):
 # Patterns are tried in order; first match wins.
 # ---------------------------------------------------------------------------
 SECTION_PATTERNS = [
+    ("business", [
+        # Deliberately anchored to "item 1" (not "1a"/"1b") so this never
+        # collides with Item 1A Risk Factors or Item 1B Unresolved Staff Comments.
+        r"^(?:item\s+1\.?\s*)?business$",
+    ]),
     ("mda", [
         r"^(?:item\s+\d+[a-z]?\.?\s*)?(?:management.{0,10}s?\s+discussion\s+and\s+analysis(?:\s+of\s+financial\s+condition\s+and\s+results\s+of\s+operations)?|md&a)$",
     ]),
@@ -321,6 +328,7 @@ def fetch_narratives_for_filing(report_url):
         # Convert to column-mapped dict with JSON strings
         result = {}
         key_to_col = {
+            "business":     "narrative_business",
             "mda":          "narrative_mda",
             "risk_factors": "narrative_risk_factors",
             "legal":        "narrative_legal",
@@ -352,7 +360,7 @@ def fetch_narratives_for_filing(report_url):
                 except Exception:
                     continue
             success(
-                f"Narrative extraction found {len(found)}/7 sections: "
+                f"Narrative extraction found {len(found)}/8 sections: "
                 f"{', '.join(s.replace('narrative_', '') for s in found)}"
                 + (f" | lengths: {', '.join(length_parts)}" if length_parts else "")
             )

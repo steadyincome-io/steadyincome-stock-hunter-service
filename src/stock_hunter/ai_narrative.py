@@ -698,15 +698,19 @@ _CONCENTRATION_KEYWORDS = [
     "single product", "one product", "primary product", "majority of our revenue",
     "majority of the company's", "depend on a limited number", "outsourcing partner",
     "contract manufactur", "single geographic", "single region", "single country",
+    "reportable segment", "operating segment", "segment revenue", "of our revenue",
+    "of total revenue", "of net revenue",
 ]
 
 
 def _extract_concentration_context(text, keywords=None, window=400, max_len=4000):
     """Find every keyword hit in the FULL text (not just a truncated prefix)
-    and return merged excerpts around each hit, capped at max_len. Returns
-    empty string if no keyword appears anywhere -- a much more trustworthy
-    "no signal" than blindly truncating and hoping the relevant sentence
-    happened to be near the top."""
+    and return merged excerpts around each hit, capped at max_len -- gives
+    the LLM better-targeted text than a blind prefix truncation when
+    concentration-signaling language exists. Returns an empty string when no
+    keyword matches anywhere; the caller falls back to a plain prefix in that
+    case rather than treating the empty result as a verified negative, since
+    this keyword list isn't exhaustive."""
     if not text:
         return ""
     keywords = keywords or _CONCENTRATION_KEYWORDS
@@ -734,26 +738,32 @@ def _extract_concentration_context(text, keywords=None, window=400, max_len=4000
     return excerpt[:max_len]
 
 
-def score_concentration_risk(risk_text: str, mda_text: str = "", label: str = "concentration_risk") -> dict:
+def score_concentration_risk(risk_text: str, mda_text: str = "", business_text: str = "", label: str = "concentration_risk") -> dict:
     """Structural concentration risk (product/customer/supplier/geographic), extracted from the
-    same risk-factor and MD&A text already fetched for other narrative scoring -- no new data
-    source required. Returns {"concentration_score": int, "summary": str, "concentration_type": str}.
+    risk-factor, MD&A, and Item 1 Business text already fetched for other narrative scoring -- no
+    new data source required. Business text is included because segment/product/geographic revenue
+    mix is usually narratively disclosed there, not in risk factors or MD&A.
+    Returns {"concentration_score": int, "summary": str, "concentration_type": str}.
     """
-    combined_text = f"{risk_text or ''}\n\n{mda_text or ''}".strip()
+    combined_text = f"{business_text or ''}\n\n{risk_text or ''}\n\n{mda_text or ''}".strip()
     if not combined_text:
         return {"concentration_score": 0, "summary": "No risk factors or MD&A provided.", "concentration_type": "none"}
-
-    excerpt = _extract_concentration_context(combined_text)
-    if not excerpt:
-        # No concentration-signaling language anywhere in the available text
-        # (not just the first N characters) -- a genuine negative, not an
-        # LLM call we'd otherwise waste on text with no relevant signal.
-        return {"concentration_score": 0, "summary": "", "concentration_type": "none"}
 
     if not _llm_backend_available():
         raise RuntimeError(f"LLM backend unavailable for [{label}]")
 
-    prompt = CONCENTRATION_PROMPT + excerpt
+    # Prefer the keyword-anchored excerpt when concentration-signaling
+    # language is found anywhere in the text (better-targeted than blind
+    # truncation, verified against a real AAPL 10-K). But the LLM is ALWAYS
+    # called either way -- a keyword miss is not treated as a verified
+    # negative, since our keyword list isn't exhaustive and a company can
+    # phrase concentration risk in ways it doesn't cover. Falling back to a
+    # plain prefix keeps this a genuine LLM judgment call rather than a
+    # silent, keyword-gated 0 that looks more authoritative than it is.
+    excerpt = _extract_concentration_context(combined_text)
+    text_for_prompt = excerpt if excerpt else combined_text[:4000]
+
+    prompt = CONCENTRATION_PROMPT + text_for_prompt
     repair_prompt = (
         prompt
         + "\n\nSTRICT REPAIR INSTRUCTION: return only a valid JSON object with keys "

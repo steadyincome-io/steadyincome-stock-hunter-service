@@ -506,7 +506,7 @@ def sync_10k_10q_financials(db_path, days_back=365, reset_financials=False, resu
         SELECT rowid, ticker, form_type, filing_date, report_url,
                narrative_mda, narrative_risk_factors, narrative_legal,
                narrative_commitments, narrative_buybacks, narrative_liquidity,
-               narrative_subsequent
+               narrative_subsequent, narrative_business
         FROM sec_financials
         WHERE form_type = '10-K'
           AND filing_date >= ?
@@ -593,6 +593,7 @@ def _process_llm_narrative_row(conn, cursor, row) -> bool:
         nj_buybacks,
         nj_liquidity,
         nj_subsequent,
+        nj_business,
     ) = row
 
     narrative_blobs = {
@@ -603,6 +604,7 @@ def _process_llm_narrative_row(conn, cursor, row) -> bool:
         "narrative_buybacks": nj_buybacks,
         "narrative_liquidity": nj_liquidity,
         "narrative_subsequent": nj_subsequent,
+        "narrative_business": nj_business,
     }
     narrative_blobs = _ensure_narratives_loaded(conn, cursor, rowid, report_url, narrative_blobs)
 
@@ -614,9 +616,10 @@ def _process_llm_narrative_row(conn, cursor, row) -> bool:
     buybacks_text = _extract_narrative_text(narrative_blobs["narrative_buybacks"])
     liquidity_text = _extract_narrative_text(narrative_blobs["narrative_liquidity"])
     subsequent_text = _extract_narrative_text(narrative_blobs["narrative_subsequent"])
+    business_text = _extract_narrative_text(narrative_blobs["narrative_business"])
 
     # Skip if no meaningful text at all
-    if not any([mda_text, risk_text, legal_text, commit_text, buybacks_text, liquidity_text, subsequent_text]):
+    if not any([mda_text, risk_text, legal_text, commit_text, buybacks_text, liquidity_text, subsequent_text, business_text]):
         return False
 
     # Risk factors: score, summary, sentiment
@@ -699,9 +702,10 @@ def _process_llm_narrative_row(conn, cursor, row) -> bool:
         comprehensive_summary = []
 
     # Structural concentration risk (product/customer/supplier/geographic) --
-    # reuses the same risk_text/mda_text already fetched above, no new SEC data.
+    # reuses risk_text/mda_text plus the Item 1 Business text, which is where
+    # segment/product/geographic revenue mix is usually narratively disclosed.
     concentration_result = _llm_call_or_fallback(
-        lambda: score_concentration_risk(risk_text, mda_text, label=f"{ticker} {form_type} {filing_date} concentration"),
+        lambda: score_concentration_risk(risk_text, mda_text, business_text, label=f"{ticker} {form_type} {filing_date} concentration"),
         {"concentration_score": None, "summary": _LLM_FAILURE_MARKER, "concentration_type": "none"},
         f"{ticker} {form_type} {filing_date} concentration",
     )

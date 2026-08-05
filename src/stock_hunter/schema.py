@@ -406,6 +406,7 @@ def migrate_db(db_path=DB_NAME):
         ("narrative_buybacks",     "TEXT"),
         ("narrative_liquidity",    "TEXT"),
         ("narrative_subsequent",   "TEXT"),
+        ("narrative_business",     "TEXT"),
         ("total_debt_usd",         "REAL"),
         ("debt_to_equity_ratio",   "REAL"),
         # Distress-scoring inputs (Altman Z / Piotroski F)

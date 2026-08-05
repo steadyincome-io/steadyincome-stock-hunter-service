@@ -81,6 +81,13 @@ MARKET_SMA_PERIOD = 200  # standard "bull vs. bear market" threshold
 VIX_TICKER = "^VIX"
 VIX_PAUSE_THRESHOLD = 30  # elevated/crisis-level volatility
 
+# ---- liquidity filter ---------------------------------------------------
+# Below ~100 open interest, bid/ask spreads commonly blow out past 10-20% of
+# the option's value, and closing a position can be difficult at a fair
+# price -- a widely-cited practitioner threshold for options sellers. Applies
+# to every leg (both legs of a spread must individually clear the bar).
+MIN_OPEN_INTEREST = 100
+
 STRATEGIES = {
     "cash_secured_put": {
         "description": "Sell a put on a name you'd be happy to own at a lower price.",
@@ -175,16 +182,18 @@ def build_avoid_list(conn):
     return avoid
 
 
-def load_all_active_stocks(conn):
-    """Every active stock, regardless of whether it's eligible for options
-    screening -- a LEFT JOIN so tickers with no daily_snapshot/drawdown_summary
-    row yet still show up (with those fields as None) rather than silently
-    disappearing, which matters for reporting a complete rejection list.
+def load_all_active_candidates(conn):
+    """Every active stock and ETF, regardless of whether it's eligible for
+    options screening -- a LEFT JOIN so tickers with no daily_snapshot/
+    drawdown_summary row yet still show up (with those fields as None) rather
+    than silently disappearing, which matters for reporting a complete
+    rejection list.
 
     Also pulls structural concentration risk (product/customer/supplier/
-    geographic) from the latest 10-K, an LLM-derived, informational-only
-    signal -- see get_insider_selling_summary for why LLM-derived signals
-    here are shown rather than used as hard filters."""
+    geographic) from the latest 10-K -- stocks only, since ETFs don't file
+    10-Ks; will be None for every ETF row, which callers should render as
+    "N/A" rather than a numeric 0 (0 would misleadingly imply "verified no
+    concentration" rather than "not applicable/not scored")."""
     cursor = conn.cursor()
     cursor.execute("""
         SELECT
@@ -206,9 +215,29 @@ def load_all_active_stocks(conn):
                   WHERE sf2.ticker = sf1.ticker AND sf2.form_type = '10-K'
               )
         ) conc ON conc.ticker = u.ticker
-        WHERE u.status = 'active' AND u.asset_type = 'Stock'
+        WHERE u.status = 'active' AND u.asset_type IN ('Stock', 'ETF')
     """)
     return [dict(row) for row in cursor.fetchall()]
+
+
+# Leveraged/inverse ETFs have structural volatility decay (well documented:
+# compounding daily rebalancing means NAV erodes over multi-day holds even if
+# the underlying index round-trips to its starting price) that makes them
+# generally unsuitable for premium-selling strategies. None are in this
+# project's default universe today, but this guards against future additions
+# rather than assuming the universe never changes. Detected by name pattern
+# since we don't store an explicit leverage-factor field.
+LEVERAGED_INVERSE_KEYWORDS = [
+    "2x", "3x", "-1x", "ultrapro", "ultra ", "ultrashort", "inverse", "bear ",
+    "leveraged", "daily target", "triple", "double short", "short etf",
+]
+
+
+def is_leveraged_or_inverse_etf(name):
+    if not name:
+        return False
+    lower = f" {name.lower()} "
+    return any(kw in lower for kw in LEVERAGED_INVERSE_KEYWORDS)
 
 
 def compute_sma(conn, ticker, period=SMA_TREND_FILTER_PERIOD):
@@ -278,6 +307,9 @@ def rank_and_filter_pool(conn, all_rows, avoid_list, strategy_key, pool_size, sm
         ticker = row["ticker"]
         if ticker in rejections:
             continue
+        if row["asset_type"] == "ETF" and is_leveraged_or_inverse_etf(row.get("name")):
+            rejections[ticker] = "Leveraged/inverse ETF -- structural volatility decay makes these unsuitable for premium selling"
+            continue
         if row["price"] is None or row["quality_score"] is None:
             rejections[ticker] = "No daily_snapshot data yet (pipeline hasn't scored this ticker)"
             continue
@@ -309,6 +341,14 @@ def rank_and_filter_pool(conn, all_rows, avoid_list, strategy_key, pool_size, sm
     return pool, rejections
 
 
+def _yf_symbol(ticker):
+    """Yahoo Finance uses a hyphen where our tickers use a period (e.g. our
+    'BRK.B' is Yahoo's 'BRK-B'). Without this, yfinance 404s / reports the
+    ticker as delisted -- not an actual data gap, just an unnormalized
+    symbol. Matches the same normalization pipeline.py already applies."""
+    return ticker.replace(".", "-")
+
+
 def has_earnings_within(ticker, days=EARNINGS_LOOKAHEAD_DAYS):
     """Returns (has_upcoming_earnings, earnings_date_or_None). Fails open
     (assumes no upcoming earnings) if yfinance can't answer, since blocking
@@ -316,7 +356,7 @@ def has_earnings_within(ticker, days=EARNINGS_LOOKAHEAD_DAYS):
     if yf is None:
         return False, None
     try:
-        calendar = yf.Ticker(ticker).calendar
+        calendar = yf.Ticker(_yf_symbol(ticker)).calendar
         earnings_dates = calendar.get("Earnings Date") if calendar else None
         if not earnings_dates:
             return False, None
@@ -379,7 +419,7 @@ def fetch_live_price(ticker):
     if yf is None:
         return None
     try:
-        hist = yf.Ticker(ticker).history(period="1d")
+        hist = yf.Ticker(_yf_symbol(ticker)).history(period="1d")
         if hist.empty:
             return None
         return float(hist["Close"].iloc[-1])
@@ -410,7 +450,7 @@ def _pick_strike_near_target(table, target_price):
 
 def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_vol_pct,
                                   short_otm_pct=SHORT_LEG_OTM_PCT, spread_width_strikes=SPREAD_WIDTH_STRIKES,
-                                  risk_free_rate=RISK_FREE_RATE):
+                                  risk_free_rate=RISK_FREE_RATE, min_open_interest=MIN_OPEN_INTEREST):
     """Pick the nearest expiration (target ~4-10 days out for a 'weekly').
 
     For single-leg strategies (cash_secured_put, covered_call), targets a
@@ -431,7 +471,7 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
     strategy = STRATEGIES[strategy_key]
     option_side = strategy["option_side"]
     try:
-        stock = yf.Ticker(ticker)
+        stock = yf.Ticker(_yf_symbol(ticker))
         target_exp, target_days = _find_weekly_expiration(stock)
         if target_exp is None:
             return None, "No weekly expiration (4-10 days out) available"
@@ -457,6 +497,16 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                 warning(f"{ticker}: {reason}")
                 return None, reason
             long_row = table.iloc[long_idx]
+
+            short_oi = int(short_row["openInterest"]) if pd.notna(short_row["openInterest"]) else 0
+            long_oi = int(long_row["openInterest"]) if pd.notna(long_row["openInterest"]) else 0
+            if short_oi < min_open_interest or long_oi < min_open_interest:
+                reason = (
+                    f"Open interest too thin: short leg {short_oi}, long leg {long_oi} "
+                    f"(minimum {min_open_interest} required on both legs)"
+                )
+                warning(f"{ticker}: {reason}")
+                return None, reason
 
             short_bid = float(short_row["bid"]) if pd.notna(short_row["bid"]) else 0.0
             short_ask = float(short_row["ask"]) if pd.notna(short_row["ask"]) else 0.0
@@ -508,12 +558,18 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                 "confidence_pct": confidence_pct,
                 "implied_volatility_pct": round(iv_pct, 1) if iv_pct is not None else None,
                 "iv_premium_vs_realized_pct": round(iv_premium_pct, 1) if iv_premium_pct is not None else None,
-                "short_open_interest": int(short_row["openInterest"]) if pd.notna(short_row["openInterest"]) else 0,
-                "long_open_interest": int(long_row["openInterest"]) if pd.notna(long_row["openInterest"]) else 0,
+                "short_open_interest": short_oi,
+                "long_open_interest": long_oi,
             }, None
 
         # Single-leg strategies (cash_secured_put, covered_call)
         contract = _pick_strike_near_target(table, short_target_price)
+        contract_oi = int(contract["openInterest"]) if pd.notna(contract["openInterest"]) else 0
+        if contract_oi < min_open_interest:
+            reason = f"Open interest too thin: {contract_oi} (minimum {min_open_interest} required)"
+            warning(f"{ticker}: {reason}")
+            return None, reason
+
         iv_pct = float(contract["impliedVolatility"]) * 100 if pd.notna(contract["impliedVolatility"]) else None
         iv_premium_pct = (iv_pct - realized_vol_pct) if (iv_pct is not None and realized_vol_pct is not None) else None
         strike = float(contract["strike"])
@@ -534,7 +590,7 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
             "confidence_pct": confidence_pct,
             "implied_volatility_pct": round(iv_pct, 1) if iv_pct is not None else None,
             "iv_premium_vs_realized_pct": round(iv_premium_pct, 1) if iv_premium_pct is not None else None,
-            "open_interest": int(contract["openInterest"]) if pd.notna(contract["openInterest"]) else 0,
+            "open_interest": contract_oi,
             "volume": int(contract["volume"]) if pd.notna(contract["volume"]) else 0,
             "bid_ask_spread_pct": round(spread_pct, 1) if spread_pct is not None else None,
         }, None
@@ -625,7 +681,7 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=10,
                   short_otm_pct=SHORT_LEG_OTM_PCT, spread_width_strikes=SPREAD_WIDTH_STRIKES,
                   sma_period=SMA_TREND_FILTER_PERIOD, risk_free_rate=RISK_FREE_RATE,
                   market_index=MARKET_INDEX_TICKER, market_sma_period=MARKET_SMA_PERIOD,
-                  vix_threshold=VIX_PAUSE_THRESHOLD):
+                  vix_threshold=VIX_PAUSE_THRESHOLD, min_open_interest=MIN_OPEN_INTEREST):
     if strategy_key not in STRATEGIES:
         raise ValueError(f"Unknown strategy '{strategy_key}'. Choose from: {list(STRATEGIES)}")
 
@@ -673,7 +729,7 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=10,
     success(f"Avoid list: {len(avoid_list)} tickers excluded")
 
     step("Step 2: ranking remaining candidates by strategy fit")
-    all_rows = load_all_active_stocks(conn)
+    all_rows = load_all_active_candidates(conn)
     by_ticker = {row["ticker"]: row for row in all_rows}
     pool, rejections = rank_and_filter_pool(conn, all_rows, avoid_list, strategy_key, pool_size, sma_period=sma_period)
     success(f"Candidate pool after quality/avoid/trend filters: {len(pool)} tickers")
@@ -723,7 +779,7 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=10,
         option_snapshot, reason = fetch_weekly_option_snapshot(
             ticker, row["price"], strategy_key, realized_vol,
             short_otm_pct=short_otm_pct, spread_width_strikes=spread_width_strikes,
-            risk_free_rate=risk_free_rate,
+            risk_free_rate=risk_free_rate, min_open_interest=min_open_interest,
         )
         if option_snapshot is None:
             rejections[ticker] = reason or "No usable weekly option data"
@@ -784,6 +840,15 @@ def _format_insider_value_m(r):
     return round(value / 1_000_000, 1)
 
 
+def _format_concentration_risk(r):
+    """N/A for ETFs (no 10-K, so genuinely not scored) rather than a numeric
+    0, which would misleadingly read as "verified no concentration"."""
+    if r.get("asset_type") == "ETF":
+        return "N/A"
+    score = r.get("concentration_risk_score")
+    return str(score) if score is not None else "N/A"
+
+
 def _print_concentration_detail(candidates):
     """Supplementary list (not a table column, too much width) of the actual
     concentration disclosure text for any candidate with a meaningful score."""
@@ -813,7 +878,7 @@ def _print_single_leg_report(candidates):
             f"{(r.get('avg_drawdown_pct') if r.get('avg_drawdown_pct') is not None else 0):>7.1f}"
             f"{(r.get('pct_above_52w_low') if r.get('pct_above_52w_low') is not None else 0):>10.1f}"
             f"{(r.get('insider_sellers') or 0):>9}{_format_insider_value_m(r):>9.1f}"
-            f"{(r.get('concentration_risk_score') if r.get('concentration_risk_score') is not None else 0):>9}"
+            f"{_format_concentration_risk(r):>9}"
             f"{r['expiration']:>12}{r['strike']:>8.1f}{r['mid_price']:>7.2f}"
             f"{(r.get('implied_volatility_pct') or 0):>7.1f}{(r.get('realized_volatility_pct') or 0):>7.1f}"
             f"{(r.get('iv_premium_vs_realized_pct') or 0):>8.1f}"
@@ -850,7 +915,7 @@ def _print_spread_report(candidates):
             f"{(r.get('avg_drawdown_pct') if r.get('avg_drawdown_pct') is not None else 0):>7.1f}"
             f"{(r.get('pct_above_52w_low') if r.get('pct_above_52w_low') is not None else 0):>10.1f}"
             f"{(r.get('insider_sellers') or 0):>9}{_format_insider_value_m(r):>9.1f}"
-            f"{(r.get('concentration_risk_score') if r.get('concentration_risk_score') is not None else 0):>9}"
+            f"{_format_concentration_risk(r):>9}"
             f"{r['expiration']:>12}{r['short_strike']:>7.1f}{r['long_strike']:>7.1f}{r['spread_width']:>7.1f}"
             f"{r['net_credit']:>8.2f}{r['mid_credit']:>7.2f}{r['max_loss']:>9.2f}"
             f"{(r.get('return_on_risk_pct') or 0):>7.1f}{r['breakeven']:>9.2f}"
@@ -939,6 +1004,8 @@ if __name__ == "__main__":
                          help="Market-regime gate: block new bullish/neutral trades if --market-index is below this N-day SMA")
     parser.add_argument("--vix-threshold", type=float, default=VIX_PAUSE_THRESHOLD,
                          help="Block new bullish/neutral trades if VIX is at/above this level")
+    parser.add_argument("--min-open-interest", type=int, default=MIN_OPEN_INTEREST,
+                         help="Minimum open interest required on every leg (liquidity floor)")
     parser.add_argument("--show-rejected", action=argparse.BooleanOptionalAction, default=True,
                          help="Print a table of every filtered-out ticker and why (default: on)")
     args = parser.parse_args()
@@ -955,5 +1022,6 @@ if __name__ == "__main__":
         market_index=args.market_index,
         market_sma_period=args.market_sma_period,
         vix_threshold=args.vix_threshold,
+        min_open_interest=args.min_open_interest,
     )
     print_report(result, show_rejected=args.show_rejected)
