@@ -137,7 +137,10 @@ def compute_piotroski_f(current, prior):
     return scaled, round(evaluated / 9, 2)
 
 
-def compute_distress(cursor, ticker, market_cap_usd=None):
+def compute_distress(cursor, ticker, market_cap_usd=None, sector=None):
+    """sector, when passed, is used only to decide whether Altman Z counts toward
+    the risk score (see the is_financial_sector block below) -- it does not
+    change which filings/fields are read."""
     filings = _latest_two_annual_filings(cursor, ticker)
     if not filings:
         return {
@@ -171,11 +174,22 @@ def compute_distress(cursor, ticker, market_cap_usd=None):
             "data_completeness": "0/9",
         }
 
+    # Altman Z's x4 component (market_cap / total_liabilities) assumes a
+    # non-financial capital structure -- heavy liabilities relative to market
+    # cap is normal, healthy leverage for a bank/insurer (deposits, policy
+    # obligations), not a solvency warning the way it would be for a
+    # manufacturer. So for Financial-sector tickers, Altman Z is still
+    # computed and reported for reference below, but excluded from the score
+    # itself; the score leans on Piotroski F alone instead (base_risk stays
+    # at the neutral 50 used when Altman Z can't be computed at all).
+    is_financial_sector = (sector or "").strip().lower() == "financial"
+    z_for_scoring = None if is_financial_sector else altman_z
+
     # Base risk from Altman Z zones (safe / grey / distress).
-    if altman_z is not None:
-        if altman_z > 2.99:
+    if z_for_scoring is not None:
+        if z_for_scoring > 2.99:
             base_risk = 15
-        elif altman_z >= 1.81:
+        elif z_for_scoring >= 1.81:
             base_risk = 45
         else:
             base_risk = 80
@@ -208,12 +222,17 @@ def compute_distress(cursor, ticker, market_cap_usd=None):
             "Positive operating cash flow" if cfo > 0 else "Negative operating cash flow"
         )
     if altman_z is not None:
-        (drivers if altman_z > 2.99 else warnings).append(f"Altman Z-score of {altman_z}")
+        if is_financial_sector:
+            warnings.append(
+                f"Altman Z-score of {altman_z} (excluded from score -- unreliable for Financial-sector companies)"
+            )
+        else:
+            (drivers if altman_z > 2.99 else warnings).append(f"Altman Z-score of {altman_z}")
     if piotroski_f is not None:
         (drivers if piotroski_f >= 6 else warnings).append(f"Piotroski F-score of {piotroski_f}/9")
 
     confidence = round(
-        (0.5 if altman_z is not None else 0.0) + (0.5 * f_completeness), 2
+        (0.5 if z_for_scoring is not None else 0.0) + (0.5 * f_completeness), 2
     )
 
     return {

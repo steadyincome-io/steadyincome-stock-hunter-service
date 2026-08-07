@@ -9,6 +9,13 @@ concurrency:
   group: equity-pipeline
   cancel-in-progress: false
 
+# id-token: write is what lets GitHub mint the OIDC token that GCP's
+# Workload Identity Federation trusts for the db-snapshot upload step below
+# -- no long-lived JSON key is stored as a secret anywhere in this repo.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
@@ -102,3 +109,28 @@ jobs:
           path: cache/sec_companyfacts
           retention-days: 14
           if-no-files-found: ignore
+
+      # No `if: always()` here, deliberately -- unlike the artifact uploads
+      # above (which exist to help debug a failed run), this snapshot is what
+      # candidate_finder/position_monitor actually read to make screening
+      # decisions. Only publish it on a successful run, so a failed/partial
+      # run never overwrites a known-good snapshot with a bad one.
+      - name: Authenticate to GCP (for db-snapshot upload)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "projects/444713174784/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "pipeline-uploader-sa@stock-hunter-trading.iam.gserviceaccount.com"
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Upload db snapshot to GCS (if the bucket exists)
+        run: |
+          set -uo pipefail
+          BUCKET="gs://stock-hunter-trading-db-snapshot"
+          if gcloud storage buckets describe "$BUCKET" >/dev/null 2>&1; then
+            gcloud storage cp drawdown_analyzer.db "$BUCKET/drawdown_analyzer.db"
+            echo "Uploaded drawdown_analyzer.db to $BUCKET"
+          else
+            echo "$BUCKET does not exist yet (infra not deployed?) -- skipping db-snapshot upload"
+          fi

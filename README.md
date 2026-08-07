@@ -586,7 +586,9 @@ What it does, in order (this is the actual execution order -- the code's own ste
    often written specifically to generate income on a name that's lagging. Survivors are then ranked by
    `drawdown_opportunity_score` (cash-secured puts / put credit spreads -- you want a name pulled back
    further than usual) or `investment_score` (covered calls), after a minimum `quality_score` bar, and
-   the top `--pool-size` proceed to the more expensive per-ticker checks below.
+   the top `--pool-size` proceed to the more expensive per-ticker checks below (default 0 = no cap,
+   evaluates the entire eligible universe -- raising the universe size or a busy CI schedule are the
+   only reasons to set this to something smaller).
 3. **Earnings exclusion** -- drops any candidate with an earnings date (via `yfinance`'s calendar)
    inside the next 7 days, since an earnings print is the most common way a short-dated premium trade
    blows up.
@@ -695,6 +697,52 @@ blow out past 10-20% of the option's value below it), but the default here is de
 thinner names -- fills are still possible below 100, just less reliably at a fair price. Treat thin OI as
 a liquidity warning to weigh yourself, not a hard fill guarantee either way. Applies to both legs of a
 `put_credit_spread`, not just the short leg.
+
+**Strike walk-in (single-leg strategies only, `--min-premium-pct-of-strike`, default 0.1%):**
+`--short-otm-pct` is only a *starting point* for `cash_secured_put`/`covered_call` -- broad, liquid names
+(e.g. VOO) can have a literal $0.00 bid at a 5%-OTM strike, which isn't conservatively priced, it's not
+tradeable at any price. Instead of reporting a dead $0 premium, `_walk_to_viable_strike` steps one strike
+at a time toward the money (never crossing into it, since that would change the position's risk character
+entirely) until the bid clears this floor as a fraction of the strike price, or the money is reached first
+with no viable strike found. Which candidates walked, and how far, is shown in a "Strike walk-in" section
+of the report so it's never silent. `put_credit_spread` doesn't need this -- its own non-positive-credit
+check already serves a similar purpose.
+
+**Edge Score (`Edge` column, drives sort order in both report tables):** a composite 0-100 ranking score
+blending everything else already computed for a candidate, so you don't have to eyeball a dozen columns
+to judge which candidate is actually best. Weights (`EDGE_SCORE_WEIGHTS` in `premium_screener.py`) are a
+judgment call, not derived from a backtest of the score itself -- they're listed here so they're
+inspectable and adjustable, not a black box:
+
+| Component | Weight | What it captures |
+|---|---|---|
+| Probability of profit (`ProbOTM%`) | 30% | Most direct "will this trade work out" signal already computed |
+| Fundamental quality (`quality_score`) | 20% | Less likely to have a company-specific adverse surprise |
+| Inverse risk score (`100 - risk_score`) | 15% | The distress/8-K/insider composite that already excludes avoid-list names |
+| IV premium over realized vol | 15% | Richer premium relative to the stock's own recent actual movement |
+| Return potential | 10% | Return-on-risk (spreads) or premium-as-%-of-strike (single-leg) |
+| Inverse concentration risk | 5% | ETFs/unscored treated as neutral (50), not a bonus -- "not scored" isn't "verified safe" |
+| Liquidity (log-scaled OI) | 5% | Diminishing returns above ~500 OI, so this can't dominate the score |
+
+After the Edge Score is computed and used to rank/select candidates (feeding into the correlation
+diversification step), the day-of-week backtest below scales it down further for final candidates based
+on their empirical historical breach rate -- a 0% breach rate leaves the score unchanged, a 100% breach
+rate would halve it. This is deliberately a screening aid for ranking already-filtered candidates against
+each other, not a standalone probability or expected-return estimate.
+
+**Day-of-week entry backtest (`--show-day-of-week-backtest`, on by default):** for the final candidates
+only (after all other filters and correlation diversification), backtests whether entering on a Tuesday
+vs. a Wednesday historically led to more or fewer strike breaches before expiration. Answers a real
+question with a real limitation: yfinance only provides intraday bars for the trailing ~60 days, so a
+5-year lookback can only use **daily** OHLC -- there is no way to know what a stock was doing at a
+specific hour on a Tuesday three years ago. So this is a day-level approximation, not the literal
+"Tuesday 12-4pm vs. Wednesday 11am-4pm" comparison: for every historical Tuesday/Wednesday over the
+trailing 5 years, it sets a hypothetical short strike at `--short-otm-pct` from that day's close, finds
+the next weekly-style expiration (rolling to the following Friday if the immediate one would be <4 days
+out, mirroring `_find_weekly_expiration`'s live 4-10-day window), and checks whether the daily low (puts)
+or high (calls) breached that strike at any point before expiration. Runs only against final candidates
+(not the whole pool), so the added cost is small -- typically 3-10 extra yfinance history fetches per
+run, not hundreds. Disable with `--no-show-day-of-week-backtest` if you want to skip it.
 
 **Considered but not built -- IV Rank:** the standard practitioner rule for "is premium rich enough to
 sell" (tastytrade-style: sell when IV Rank > 50, i.e. current IV is in the upper half of its own trailing

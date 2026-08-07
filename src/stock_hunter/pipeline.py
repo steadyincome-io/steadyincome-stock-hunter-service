@@ -461,7 +461,7 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
 
     # Step 2: Fetch active universe
     step("Step 2/5: loading active universe")
-    cursor.execute("SELECT ticker, asset_type, market_cap FROM universe WHERE status = 'active'")
+    cursor.execute("SELECT ticker, asset_type, market_cap, sector FROM universe WHERE status = 'active'")
     tickers = cursor.fetchall()
     success(f"Loaded {len(tickers)} active tickers")
     progress(35, "Phase 2/5: active universe loaded")
@@ -547,7 +547,7 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
     if yf is None:
         warning("yfinance is unavailable; skipping live market refresh for this run")
     else:
-        for index, (ticker, asset_type, cap) in enumerate(tickers, start=1):
+        for index, (ticker, asset_type, cap, sector) in enumerate(tickers, start=1):
             yf_ticker = ticker.replace('.', '-')
             try:
                 ticker_start(ticker, f"fetching market history and fundamentals ({asset_type})")
@@ -646,6 +646,7 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                     distress_result = compute_distress(
                         cursor, ticker,
                         market_cap_usd=market_cap_usd if market_cap_usd else market_cap_billion * 1e9,
+                        sector=sector,
                     )
                     store_distress_score(cursor, distress_result)
 

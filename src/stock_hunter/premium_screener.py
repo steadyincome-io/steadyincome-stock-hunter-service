@@ -60,6 +60,16 @@ SHORT_LEG_OTM_PCT = 0.05
 # adapts automatically to each underlying's actual strike spacing.
 SPREAD_WIDTH_STRIKES = 2
 
+# ---- single-leg strike walk-in (cash_secured_put / covered_call) ----------
+# --short-otm-pct is only a STARTING point for single-leg strategies: broad,
+# liquid names (e.g. VOO) can have a literal $0.00 bid at a 5%-OTM strike --
+# not conservatively priced, just not tradeable at any price. Rather than
+# reporting a dead $0 premium, _walk_to_viable_strike steps one strike at a
+# time toward the money (never crossing into it) until the bid clears this
+# floor (as a fraction of the strike price), or the money is reached first.
+MIN_PREMIUM_PCT_OF_STRIKE = 0.001  # 0.1% of strike -- floor for "worth collecting"
+MAX_STRIKE_WALK_STEPS = 15
+
 # ---- trend filter -------------------------------------------------------
 # Require price above its trailing SMA for bullish/neutral strategies (you
 # want the stock to stay flat-to-up), sourced from stored price_history.
@@ -80,6 +90,17 @@ MARKET_INDEX_TICKER = "SPY"
 MARKET_SMA_PERIOD = 200  # standard "bull vs. bear market" threshold
 VIX_TICKER = "^VIX"
 VIX_PAUSE_THRESHOLD = 30  # elevated/crisis-level volatility
+
+# ---- day-of-week entry backtest (informational, opt-in) -------------------
+# yfinance only provides intraday bars for the trailing ~60 days, so a 5-year
+# lookback can only use daily OHLC -- there is no way to know what a stock was
+# doing at, say, 2pm on a Tuesday three years ago. This backtest is therefore
+# a day-level approximation: "entering on a Tuesday/Wednesday" uses that day's
+# close as the hypothetical strike reference, and "breached before expiration"
+# checks the daily low (puts) / high (calls) against that strike through the
+# next weekly-style expiration, not a specific intraday hour.
+DAY_OF_WEEK_BACKTEST_YEARS = 5
+_BACKTEST_ENTRY_WEEKDAYS = {1: "Tuesday", 2: "Wednesday"}  # datetime.weekday(): Mon=0
 
 # ---- liquidity filter ---------------------------------------------------
 # ~100 open interest is the widely-cited practitioner threshold for options
@@ -295,10 +316,11 @@ def check_vix_level(threshold=VIX_PAUSE_THRESHOLD, vix_ticker=VIX_TICKER):
 
 
 def rank_and_filter_pool(conn, all_rows, avoid_list, strategy_key, pool_size, sma_period=SMA_TREND_FILTER_PERIOD):
-    """Split all active stocks into an eligible, ranked pool (up to pool_size)
-    and a rejections dict {ticker: reason} covering everyone else: avoid-list
-    hits, missing snapshot data, below the strategy's quality bar, below its
-    trend filter (for strategies that require one), or ranked outside the
+    """Split all active stocks into an eligible, ranked pool (up to pool_size,
+    or the entire eligible set when pool_size is 0/None -- no cap) and a
+    rejections dict {ticker: reason} covering everyone else: avoid-list hits,
+    missing snapshot data, below the strategy's quality bar, below its trend
+    filter (for strategies that require one), or ranked outside the
     evaluated pool."""
     strategy = STRATEGIES[strategy_key]
     rejections = {}
@@ -335,12 +357,14 @@ def rank_and_filter_pool(conn, all_rows, avoid_list, strategy_key, pool_size, sm
     else:
         eligible.sort(key=lambda r: (r["investment_score"] or 0), reverse=True)
 
-    pool = eligible[:pool_size]
-    for row in eligible[pool_size:]:
-        rejections[row["ticker"]] = (
-            f"Passed quality/avoid filters but ranked outside the top {pool_size} candidates "
-            "evaluated (raise --pool-size to consider more)"
-        )
+    no_cap = not pool_size or pool_size <= 0
+    pool = eligible if no_cap else eligible[:pool_size]
+    if not no_cap:
+        for row in eligible[pool_size:]:
+            rejections[row["ticker"]] = (
+                f"Passed quality/avoid filters but ranked outside the top {pool_size} candidates "
+                "evaluated (raise --pool-size to consider more)"
+            )
     return pool, rejections
 
 
@@ -451,9 +475,51 @@ def _pick_strike_near_target(table, target_price):
     return table.sort_values("distance").iloc[0]
 
 
+def _walk_to_viable_strike(table, current_price, option_side, start_otm_pct,
+                            min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE,
+                            max_steps=MAX_STRIKE_WALK_STEPS):
+    """Start at `start_otm_pct` OTM (single-leg strategies only) and, if that
+    strike's bid is dead or too small to be worth collecting, step one strike
+    at a time toward the money (never past it -- crossing to ITM changes the
+    position's whole risk character) until the bid clears `min_premium_pct_of_strike`
+    of the strike price, or the money is reached without finding one.
+
+    `table` must already be sorted by strike ascending with a reset index
+    (as fetch_weekly_option_snapshot prepares it).
+
+    Returns (row, otm_pct_used, steps_walked) on success, or (None, None, None)
+    if nothing between the starting strike and the money clears the floor.
+    """
+    if option_side == "puts":
+        target_price = current_price * (1 - start_otm_pct)
+    else:
+        target_price = current_price * (1 + start_otm_pct)
+    start_row = _pick_strike_near_target(table, target_price)
+    idx = table.index[table["strike"] == start_row["strike"]][0]
+    step_dir = 1 if option_side == "puts" else -1  # toward the money: higher strike for puts, lower for calls
+
+    for steps_walked in range(max_steps + 1):
+        if idx < 0 or idx >= len(table):
+            break
+        row = table.iloc[idx]
+        strike = float(row["strike"])
+        # Stop walking once we'd cross into the money -- this is meant to find
+        # a *fillable OTM* strike, not to creep into a different position type.
+        if (option_side == "puts" and strike >= current_price) or (option_side != "puts" and strike <= current_price):
+            break
+        bid = float(row["bid"]) if pd.notna(row["bid"]) else 0.0
+        if bid > 0 and strike > 0 and (bid / strike) >= min_premium_pct_of_strike:
+            otm_pct_used = abs(current_price - strike) / current_price
+            return row, otm_pct_used, steps_walked
+        idx += step_dir
+
+    return None, None, None
+
+
 def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_vol_pct,
                                   short_otm_pct=SHORT_LEG_OTM_PCT, spread_width_strikes=SPREAD_WIDTH_STRIKES,
-                                  risk_free_rate=RISK_FREE_RATE, min_open_interest=MIN_OPEN_INTEREST):
+                                  risk_free_rate=RISK_FREE_RATE, min_open_interest=MIN_OPEN_INTEREST,
+                                  min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE):
     """Pick the nearest expiration (target ~4-10 days out for a 'weekly').
 
     For single-leg strategies (cash_secured_put, covered_call), targets a
@@ -565,8 +631,22 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                 "long_open_interest": long_oi,
             }, None
 
-        # Single-leg strategies (cash_secured_put, covered_call)
-        contract = _pick_strike_near_target(table, short_target_price)
+        # Single-leg strategies (cash_secured_put, covered_call): short_otm_pct
+        # is only a starting point -- walk toward the money if that strike's
+        # bid is dead or too thin to be worth collecting (see
+        # _walk_to_viable_strike and MIN_PREMIUM_PCT_OF_STRIKE above).
+        contract, otm_pct_used, steps_walked = _walk_to_viable_strike(
+            table, current_price, option_side, short_otm_pct,
+            min_premium_pct_of_strike=min_premium_pct_of_strike,
+        )
+        if contract is None:
+            reason = (
+                f"No strike between {short_otm_pct * 100:.1f}% OTM and the money cleared the "
+                f"{min_premium_pct_of_strike * 100:.2f}%-of-strike minimum premium floor"
+            )
+            warning(f"{ticker}: {reason}")
+            return None, reason
+
         contract_oi = int(contract["openInterest"]) if pd.notna(contract["openInterest"]) else 0
         if contract_oi < min_open_interest:
             reason = f"Open interest too thin: {contract_oi} (minimum {min_open_interest} required)"
@@ -583,19 +663,34 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
         mid = (bid + ask) / 2 if (bid or ask) else 0.0
         spread_pct = ((ask - bid) / mid * 100) if mid else None
 
+        # Primary: the bid, same conservative-fill philosophy as
+        # put_credit_spread's net_credit -- as the seller, the bid is the
+        # price a buyer is currently offering, i.e. what you could
+        # realistically collect on a marketable order right now. The ask is
+        # what OTHER sellers are asking, not a price you're likely to get
+        # filled at yourself. mid_price is kept only as a secondary,
+        # best-case reference, same role mid_credit plays for spreads.
+        premium = round(bid, 2)
+        breakeven = round(strike - premium, 2) if option_side == "puts" else round(strike + premium, 2)
+
         return {
             "expiration": target_exp,
             "days_to_expiration": target_days,
             "strike": strike,
             "bid": bid,
             "ask": ask,
+            "premium": premium,
             "mid_price": round(mid, 2),
+            "breakeven": breakeven,
             "confidence_pct": confidence_pct,
             "implied_volatility_pct": round(iv_pct, 1) if iv_pct is not None else None,
             "iv_premium_vs_realized_pct": round(iv_premium_pct, 1) if iv_premium_pct is not None else None,
             "open_interest": contract_oi,
             "volume": int(contract["volume"]) if pd.notna(contract["volume"]) else 0,
             "bid_ask_spread_pct": round(spread_pct, 1) if spread_pct is not None else None,
+            "otm_pct_used": round(otm_pct_used * 100, 1),
+            "otm_pct_requested": round(short_otm_pct * 100, 1),
+            "strike_walk_steps": steps_walked,
         }, None
     except Exception as exc:
         warning(f"{ticker}: option chain lookup failed: {exc}")
@@ -618,6 +713,89 @@ def compute_realized_volatility_pct(conn, ticker, lookback_days=30):
         return None
     annualized_pct = log_returns.std() * math.sqrt(252) * 100
     return round(annualized_pct, 1)
+
+
+def _expiration_for_entry_date(entry_date):
+    """Nearest Friday that would be a valid 'weekly' expiration under the same
+    4-10-day window _find_weekly_expiration uses live -- e.g. a Tuesday entry
+    (Friday only 3 days out) rolls to the following Friday (10 days out),
+    matching how the live screener would actually roll to next week's
+    expiration rather than picking one that's too close."""
+    for days_ahead in range(1, 15):
+        candidate = entry_date + timedelta(days=days_ahead)
+        if candidate.weekday() == 4:  # Friday
+            days_out = (candidate - entry_date).days
+            if 4 <= days_out <= 10:
+                return candidate
+    return None
+
+
+def backtest_day_of_week_breach(ticker, option_side, otm_pct, lookback_years=DAY_OF_WEEK_BACKTEST_YEARS):
+    """For each of the last `lookback_years` years, checks -- had a short
+    strike been set `otm_pct` away from that day's close on every historical
+    Tuesday and every historical Wednesday -- how often the daily low (puts)
+    or high (calls) breached that strike before the next weekly-style
+    expiration (see _expiration_for_entry_date). Day-level only; see the
+    DAY_OF_WEEK_BACKTEST_YEARS comment above for why intraday isn't possible
+    over a 5-year lookback.
+
+    Returns {"Tuesday": stats_or_None, "Wednesday": stats_or_None}, where
+    stats is {"total_trades": int, "breached": int, "breach_rate_pct": float},
+    or None overall if yfinance/history is unavailable.
+    """
+    if yf is None:
+        return None
+    try:
+        hist = yf.Ticker(_yf_symbol(ticker)).history(period=f"{lookback_years}y")
+    except Exception as exc:
+        warning(f"{ticker}: day-of-week backtest history fetch failed: {exc}")
+        return None
+    if hist.empty:
+        return None
+
+    rows = sorted(
+        (idx.date(), float(r["Low"]), float(r["High"]))
+        for idx, r in hist.iterrows()
+    )
+    all_dates = [d for d, _, _ in rows]
+    by_date = {d: (lo, hi) for d, lo, hi in rows}
+    last_available_date = all_dates[-1]
+    closes_by_date = {idx.date(): float(r["Close"]) for idx, r in hist.iterrows()}
+
+    results = {}
+    for wd, label in _BACKTEST_ENTRY_WEEKDAYS.items():
+        total = 0
+        breached = 0
+        for entry_date in all_dates:
+            if entry_date.weekday() != wd:
+                continue
+            expiration = _expiration_for_entry_date(entry_date)
+            if expiration is None or expiration > last_available_date:
+                continue  # trade isn't fully observable within our history window yet
+
+            entry_close = closes_by_date[entry_date]
+            if option_side == "puts":
+                strike = entry_close * (1 - otm_pct)
+            else:
+                strike = entry_close * (1 + otm_pct)
+
+            window_dates = [d for d in all_dates if entry_date < d <= expiration]
+            if not window_dates:
+                continue
+
+            total += 1
+            for d in window_dates:
+                lo, hi = by_date[d]
+                if (option_side == "puts" and lo <= strike) or (option_side != "puts" and hi >= strike):
+                    breached += 1
+                    break
+
+        results[label] = None if total == 0 else {
+            "total_trades": total,
+            "breached": breached,
+            "breach_rate_pct": round((breached / total) * 100, 1),
+        }
+    return results
 
 
 def load_return_series(conn, tickers, lookback_days=CORRELATION_LOOKBACK_DAYS):
@@ -647,11 +825,14 @@ def diversify_by_correlation(ranked_tickers, returns_df, max_picks, max_correlat
     Returns (picked_tickers, rejections) where rejections maps every
     not-picked ticker to a specific reason (too correlated with which peer,
     or simply not evaluated because --max-picks was already reached).
+    max_picks of 0/None means no cap -- every candidate that clears the
+    correlation check is kept.
     """
+    no_cap = not max_picks or max_picks <= 0
     picked = []
     rejections = {}
     for ticker in ranked_tickers:
-        if len(picked) >= max_picks:
+        if not no_cap and len(picked) >= max_picks:
             rejections[ticker] = f"Not evaluated for correlation -- --max-picks={max_picks} already reached"
             continue
         if ticker not in returns_df.columns:
@@ -680,11 +861,105 @@ def diversify_by_correlation(ranked_tickers, returns_df, max_picks, max_correlat
     return picked, rejections
 
 
-def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=10, pool_size=40,
+# ---- composite ranking score -----------------------------------------------
+# Weights are a judgment call, not derived from a backtest of the score
+# itself -- documented here and in the README so they're inspectable and
+# adjustable, not a black box. They sum to 1.0.
+EDGE_SCORE_WEIGHTS = {
+    "prob_otm": 0.30,     # Black-Scholes P(finishes OTM) -- most direct "will this work out" signal
+    "quality": 0.20,      # fundamental quality_score
+    "risk": 0.15,         # inverse of the composite risk_score (distress/8-K/insider)
+    "iv_premium": 0.15,   # IV vs. realized volatility -- richer premium relative to actual recent movement
+    "return_potential": 0.10,  # return-on-risk (spreads) or premium-as-%-of-strike (single-leg)
+    "concentration": 0.05,     # inverse of concentration_risk_score, neutral (not bonus) when unscored/ETF
+    "liquidity": 0.05,         # log-scaled open interest, diminishing returns above ~500 OI
+}
+
+
+def compute_edge_score(row):
+    """Composite 0-100 ranking score combining every quality/risk/pricing
+    signal already computed for a candidate -- higher means more expected
+    profit with more support against an adverse move, per EDGE_SCORE_WEIGHTS.
+    This is a screening aid for ranking already-filtered candidates against
+    each other, not a standalone probability or return estimate. Does NOT
+    include the day-of-week breach backtest -- see apply_day_of_week_penalty,
+    applied separately since that backtest only runs on final candidates.
+    """
+    prob_otm = row.get("confidence_pct")
+    prob_component = prob_otm if prob_otm is not None else 50.0
+
+    quality_component = row.get("quality_score") if row.get("quality_score") is not None else 50.0
+
+    risk_score = row.get("risk_score")
+    risk_component = (100 - risk_score) if risk_score is not None else 50.0
+
+    iv_prem = row.get("iv_premium_vs_realized_pct")
+    # Clips a -10%..+40% range to 0-100 -- richer-than-realized IV is good,
+    # but there's no benefit to rewarding an extreme reading beyond that band.
+    iv_component = 50.0 if iv_prem is None else max(0.0, min(100.0, (iv_prem + 10) / 50 * 100))
+
+    # Return potential: put_credit_spread already expresses this as return-on-
+    # risk (max profit / max loss, i.e. relative to actual capital at risk).
+    # Single-leg strategies don't post collateral against a defined max loss,
+    # so premium-as-%-of-strike is the closest equivalent.
+    ror_pct = row.get("return_on_risk_pct")
+    if ror_pct is not None:
+        return_component = max(0.0, min(100.0, ror_pct / 50.0 * 100))
+    else:
+        premium = row.get("premium")
+        strike = row.get("strike")
+        if premium is not None and strike:
+            return_component = max(0.0, min(100.0, (premium / strike * 100) / 3.0 * 100))
+        else:
+            return_component = 50.0
+
+    conc_score = row.get("concentration_risk_score")
+    conc_component = 50.0 if (row.get("asset_type") == "ETF" or conc_score is None) else (100 - conc_score)
+
+    oi = row.get("open_interest")
+    if oi is None:
+        short_oi, long_oi = row.get("short_open_interest"), row.get("long_open_interest")
+        if short_oi is not None and long_oi is not None:
+            oi = min(short_oi, long_oi)  # the thinner leg is the binding constraint
+    oi = oi or 0
+    liquidity_component = max(0.0, min(100.0, math.log10(oi + 1) / math.log10(500) * 100))
+
+    w = EDGE_SCORE_WEIGHTS
+    score = (
+        w["prob_otm"] * prob_component
+        + w["quality"] * quality_component
+        + w["risk"] * risk_component
+        + w["iv_premium"] * iv_component
+        + w["return_potential"] * return_component
+        + w["concentration"] * conc_component
+        + w["liquidity"] * liquidity_component
+    )
+    return round(score, 1)
+
+
+def apply_day_of_week_penalty(base_score, dow_backtest, penalty_factor=0.5):
+    """Scales the composite edge score down based on the day-of-week breach
+    backtest's average historical breach rate (Tuesday + Wednesday averaged)
+    -- an empirical "how often did a similarly-struck trade get breached
+    historically" signal that compute_edge_score doesn't otherwise see.
+    penalty_factor=0.5 means a 100% historical breach rate halves the score;
+    a 0% breach rate leaves it unchanged. Returns base_score unmodified if no
+    backtest data is available (e.g. the yfinance history fetch failed)."""
+    if base_score is None or not dow_backtest:
+        return base_score
+    rates = [v["breach_rate_pct"] for v in dow_backtest.values() if v]
+    if not rates:
+        return base_score
+    avg_breach_pct = sum(rates) / len(rates)
+    return round(base_score * (1 - (avg_breach_pct / 100) * penalty_factor), 1)
+
+
+def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, pool_size=0,
                   short_otm_pct=SHORT_LEG_OTM_PCT, spread_width_strikes=SPREAD_WIDTH_STRIKES,
                   sma_period=SMA_TREND_FILTER_PERIOD, risk_free_rate=RISK_FREE_RATE,
                   market_index=MARKET_INDEX_TICKER, market_sma_period=MARKET_SMA_PERIOD,
-                  vix_threshold=VIX_PAUSE_THRESHOLD, min_open_interest=MIN_OPEN_INTEREST):
+                  vix_threshold=VIX_PAUSE_THRESHOLD, min_open_interest=MIN_OPEN_INTEREST,
+                  show_day_of_week_backtest=True, min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE):
     if strategy_key not in STRATEGIES:
         raise ValueError(f"Unknown strategy '{strategy_key}'. Choose from: {list(STRATEGIES)}")
 
@@ -783,6 +1058,7 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=10,
             ticker, row["price"], strategy_key, realized_vol,
             short_otm_pct=short_otm_pct, spread_width_strikes=spread_width_strikes,
             risk_free_rate=risk_free_rate, min_open_interest=min_open_interest,
+            min_premium_pct_of_strike=min_premium_pct_of_strike,
         )
         if option_snapshot is None:
             rejections[ticker] = reason or "No usable weekly option data"
@@ -799,12 +1075,10 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=10,
             "those rows may be off from the current market."
         )
 
-    if strategy_key == "put_credit_spread":
-        step("Step 4b: sorting by return-on-risk (bid/ask realistic-fill basis)")
-        enriched.sort(key=lambda r: (r.get("return_on_risk_pct") if r.get("return_on_risk_pct") is not None else -999), reverse=True)
-    else:
-        step("Step 4b: sorting by implied-volatility premium over realized volatility")
-        enriched.sort(key=lambda r: (r.get("iv_premium_vs_realized_pct") or -999), reverse=True)
+    step("Step 4b: ranking by composite edge score")
+    for row in enriched:
+        row["edge_score"] = compute_edge_score(row)
+    enriched.sort(key=lambda r: (r.get("edge_score") if r.get("edge_score") is not None else -999), reverse=True)
 
     step("Step 5: cross-position correlation check")
     ranked_tickers = [r["ticker"] for r in enriched]
@@ -814,6 +1088,16 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=10,
     final_rows = [r for r in enriched if r["ticker"] in final_tickers]
     final_rows.sort(key=lambda r: final_tickers.index(r["ticker"]))
     success(f"Final candidates after correlation diversification: {len(final_rows)}")
+
+    if show_day_of_week_backtest:
+        step(f"Step 6: day-of-week entry backtest ({DAY_OF_WEEK_BACKTEST_YEARS}y history) and edge-score adjustment")
+        for row in final_rows:
+            row["dow_backtest"] = backtest_day_of_week_breach(row["ticker"], strategy["option_side"], short_otm_pct)
+            row["edge_score"] = apply_day_of_week_penalty(row.get("edge_score"), row["dow_backtest"])
+        # Re-sort now that the day-of-week penalty has adjusted scores --
+        # this is the only re-sort of final_rows, so it's still the final
+        # printed order.
+        final_rows.sort(key=lambda r: (r.get("edge_score") if r.get("edge_score") is not None else -999), reverse=True)
 
     rejected_rows = []
     for ticker, reason in rejections.items():
@@ -865,45 +1149,100 @@ def _print_concentration_detail(candidates):
         print(f"  {r['ticker']} [{ctype}, score {r['concentration_risk_score']}]: {r['concentration_risk_summary']}")
 
 
+def _print_strike_walk_detail(candidates):
+    """Single-leg only: notes which candidates didn't use the requested
+    --short-otm-pct strike as-is because it had a dead/too-thin bid, and how
+    far _walk_to_viable_strike had to step toward the money to find one."""
+    walked = [r for r in candidates if (r.get("strike_walk_steps") or 0) > 0]
+    if not walked:
+        return
+    print()
+    print("Strike walk-in (requested OTM strike had a dead/too-thin bid, stepped toward the money instead):")
+    for r in walked:
+        print(
+            f"  {r['ticker']}: requested {r['otm_pct_requested']}% OTM -> used {r['otm_pct_used']}% OTM "
+            f"({r['strike_walk_steps']} strike(s) closer to the money)"
+        )
+
+
+def _print_day_of_week_backtest(candidates):
+    """Only present when --show-day-of-week-backtest was passed (see
+    backtest_day_of_week_breach for what this does and does not measure)."""
+    flagged = [r for r in candidates if r.get("dow_backtest")]
+    if not flagged:
+        return
+    print()
+    print(
+        f"Day-of-week entry backtest ({DAY_OF_WEEK_BACKTEST_YEARS}y daily history -- breach = daily "
+        "low/high crossed that day's hypothetical short strike before the next weekly-style expiration; "
+        "day-level only, not a specific intraday hour, since 5y of intraday history isn't available):"
+    )
+    for r in flagged:
+        parts = []
+        for label in ("Tuesday", "Wednesday"):
+            stats = r["dow_backtest"].get(label)
+            if stats is None:
+                parts.append(f"{label}: not enough history to evaluate")
+            else:
+                parts.append(
+                    f"{label} entries {stats['breached']}/{stats['total_trades']} "
+                    f"breached ({stats['breach_rate_pct']}%)"
+                )
+        print(f"  {r['ticker']}: " + " | ".join(parts))
+
+
 def _print_single_leg_report(candidates):
     header = (
-        f"{'Ticker':<8}{'Sector':<16}{'Price':>9}{'Qual':>6}{'Risk':>6}"
+        f"{'Ticker':<8}{'Edge':>7}  {'Sector':<16}{'Price':>9}{'Qual':>6}{'Risk':>6}"
         f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}"
-        f"{'Exp':>12}{'Strike':>8}{'Mid':>7}{'IV%':>7}{'RV%':>7}{'IVprem':>8}{'ProbOTM%':>9}{'OI':>7}"
+        f"{'Exp':>12}{'Strike':>8}{'Premium':>8}{'Mid':>7}{'BrkEven':>9}"
+        f"{'IV%':>7}{'RV%':>7}{'IVprem':>8}{'ProbOTM%':>9}{'OI':>7}"
     )
     print(header)
     print("-" * len(header))
     for r in candidates:
         print(
-            f"{_ticker_label(r):<8}{(r['sector'] or '')[:14]:<16}{r['price']:>9.2f}"
+            f"{_ticker_label(r):<8}{(r.get('edge_score') if r.get('edge_score') is not None else 0):>7.1f}  "
+            f"{(r['sector'] or '')[:14]:<16}{r['price']:>9.2f}"
             f"{r['quality_score']:>6}{r['risk_score']:>6}"
             f"{(r.get('current_drawdown_pct') if r.get('current_drawdown_pct') is not None else 0):>8.1f}"
             f"{(r.get('avg_drawdown_pct') if r.get('avg_drawdown_pct') is not None else 0):>7.1f}"
             f"{(r.get('pct_above_52w_low') if r.get('pct_above_52w_low') is not None else 0):>10.1f}"
             f"{(r.get('insider_sellers') or 0):>9}{_format_insider_value_m(r):>9.1f}"
             f"{_format_concentration_risk(r):>9}"
-            f"{r['expiration']:>12}{r['strike']:>8.1f}{r['mid_price']:>7.2f}"
+            f"{r['expiration']:>12}{r['strike']:>8.1f}{r['premium']:>8.2f}{r['mid_price']:>7.2f}{r['breakeven']:>9.2f}"
             f"{(r.get('implied_volatility_pct') or 0):>7.1f}{(r.get('realized_volatility_pct') or 0):>7.1f}"
             f"{(r.get('iv_premium_vs_realized_pct') or 0):>8.1f}"
             f"{(r.get('confidence_pct') if r.get('confidence_pct') is not None else 0):>9.1f}{(r.get('open_interest') or 0):>7}"
         )
     print()
+    print("Edge = composite 0-100 ranking score (this table's sort order) blending ProbOTM%, quality_score,")
+    print("risk_score, IV-vs-realized premium, return potential, concentration risk, and liquidity, then")
+    print("scaled down by the day-of-week breach backtest below -- see README for the exact weights. A")
+    print("screening aid for ranking filtered candidates against each other, not a probability/return estimate.")
     print("CurrDD% = current drawdown from 52w high (negative), AvgDD% = this ticker's historical average")
     print("drawdown magnitude, Lo52wGap% = how far the price sits above its 52-week low (smaller = closer to the low).")
     print("#Sellers/InsSel$M = distinct insiders who sold on the open market / total $ sold, trailing 180 days --")
     print("informational only, not used to filter candidates (see README for why).")
     print("ConcRisk = LLM-derived 0-100 estimate of structural product/customer/supplier/geographic")
     print("concentration from the latest 10-K -- informational only, not used to filter candidates.")
+    print("Premium = bid price at a realistic fill (what a buyer is currently offering, i.e. what you as the")
+    print("seller could realistically collect right now) -- the primary, conservative figure, same philosophy")
+    print("as put_credit_spread's Credit. Mid = mid-to-mid price, shown only as an upside reference, not what")
+    print("you should plan around. BrkEven = strike - Premium (puts) or strike + Premium (calls).")
     print("ProbOTM% = Black-Scholes model estimate of the probability this strike finishes out-of-the-money at")
     print("expiration (using the contract's own implied volatility) -- a model estimate, not a guarantee.")
+    print("OI = open interest for this specific contract (not daily volume) -- already cleared --min-open-interest.")
     if any(r.get("price_source", "live") != "live" for r in candidates):
         print("* price is the stored daily_snapshot value, not a live quote (yfinance fetch failed for this ticker).")
     _print_concentration_detail(candidates)
+    _print_strike_walk_detail(candidates)
+    _print_day_of_week_backtest(candidates)
 
 
 def _print_spread_report(candidates):
     header = (
-        f"{'Ticker':<8}{'Sector':<11}{'Price':>9}{'Qual':>6}{'Risk':>6}"
+        f"{'Ticker':<8}{'Edge':>7}  {'Sector':<11}{'Price':>9}{'Qual':>6}{'Risk':>6}"
         f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}"
         f"{'Exp':>12}{'Short':>7}{'Long':>7}{'Width':>7}{'Credit':>8}{'MidCr':>7}"
         f"{'MaxLoss':>9}{'RoR%':>7}{'BrkEven':>9}{'IV%':>7}{'ProbOTM%':>9}"
@@ -912,7 +1251,8 @@ def _print_spread_report(candidates):
     print("-" * len(header))
     for r in candidates:
         print(
-            f"{_ticker_label(r):<8}{(r['sector'] or '')[:9]:<11}{r['price']:>9.2f}"
+            f"{_ticker_label(r):<8}{(r.get('edge_score') if r.get('edge_score') is not None else 0):>7.1f}  "
+            f"{(r['sector'] or '')[:9]:<11}{r['price']:>9.2f}"
             f"{r['quality_score']:>6}{r['risk_score']:>6}"
             f"{(r.get('current_drawdown_pct') if r.get('current_drawdown_pct') is not None else 0):>8.1f}"
             f"{(r.get('avg_drawdown_pct') if r.get('avg_drawdown_pct') is not None else 0):>7.1f}"
@@ -926,6 +1266,10 @@ def _print_spread_report(candidates):
             f"{(r.get('confidence_pct') if r.get('confidence_pct') is not None else 0):>9.1f}"
         )
     print()
+    print("Edge = composite 0-100 ranking score (this table's sort order) blending ProbOTM%, quality_score,")
+    print("risk_score, IV-vs-realized premium, return-on-risk, concentration risk, and liquidity, then scaled")
+    print("down by the day-of-week breach backtest below -- see README for the exact weights. A screening aid")
+    print("for ranking filtered candidates against each other, not a probability/return estimate.")
     print("CurrDD% = current drawdown from 52w high (negative), AvgDD% = this ticker's historical average")
     print("drawdown magnitude, Lo52wGap% = how far the price sits above its 52-week low (smaller = closer to the low).")
     print("#Sellers/InsSel$M = distinct insiders who sold on the open market / total $ sold, trailing 180 days --")
@@ -942,6 +1286,7 @@ def _print_spread_report(candidates):
     if any(r.get("price_source", "live") != "live" for r in candidates):
         print("* price is the stored daily_snapshot value, not a live quote (yfinance fetch failed for this ticker).")
     _print_concentration_detail(candidates)
+    _print_day_of_week_backtest(candidates)
 
 
 def _print_rejections_table(rejected_rows):
@@ -991,8 +1336,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Weekly options premium-selling screener")
     parser.add_argument("--db-path", default=DB_NAME, help="Path to drawdown_analyzer.db")
     parser.add_argument("--strategy", choices=list(STRATEGIES), default="cash_secured_put")
-    parser.add_argument("--max-picks", type=int, default=10, help="Max final candidates after diversification")
-    parser.add_argument("--pool-size", type=int, default=40, help="How many top-ranked names to run option/earnings checks on")
+    parser.add_argument("--max-picks", type=int, default=0,
+                         help="Max final candidates after diversification. 0 (default) = no cap, keep every "
+                              "candidate that clears the correlation check")
+    parser.add_argument("--pool-size", type=int, default=0,
+                         help="How many top-ranked names to run option/earnings checks on. 0 (default) = no cap, "
+                              "evaluate the entire eligible universe")
     parser.add_argument("--short-otm-pct", type=float, default=SHORT_LEG_OTM_PCT,
                          help="How far OTM to target the short leg, e.g. 0.05 = 5%% below price for puts, above for calls")
     parser.add_argument("--spread-width-strikes", type=int, default=SPREAD_WIDTH_STRIKES,
@@ -1009,8 +1358,19 @@ if __name__ == "__main__":
                          help="Block new bullish/neutral trades if VIX is at/above this level")
     parser.add_argument("--min-open-interest", type=int, default=MIN_OPEN_INTEREST,
                          help="Minimum open interest required on every leg (liquidity floor)")
+    parser.add_argument("--min-premium-pct-of-strike", type=float, default=MIN_PREMIUM_PCT_OF_STRIKE,
+                         help="cash_secured_put/covered_call only: --short-otm-pct is just a starting point -- if "
+                              "that strike's bid is dead or below this fraction of the strike price, walk toward "
+                              "the money (never past it) until a strike clears this floor (default 0.001 = 0.1%%)")
     parser.add_argument("--show-rejected", action=argparse.BooleanOptionalAction, default=True,
                          help="Print a table of every filtered-out ticker and why (default: on)")
+    parser.add_argument("--show-day-of-week-backtest", action=argparse.BooleanOptionalAction, default=True,
+                         help=f"For final candidates only, backtest {DAY_OF_WEEK_BACKTEST_YEARS}y of daily history: "
+                              "how often a Tuesday- vs. Wednesday-entered short strike (at --short-otm-pct) would "
+                              "have been breached before the next weekly-style expiration. Day-level approximation "
+                              "only (no 5y intraday data exists). On by default (adds one extra yfinance history "
+                              "fetch per final candidate, not per pool candidate, so the added cost is small); "
+                              "disable with --no-show-day-of-week-backtest.")
     args = parser.parse_args()
 
     result = run_screener(
@@ -1026,5 +1386,7 @@ if __name__ == "__main__":
         market_sma_period=args.market_sma_period,
         vix_threshold=args.vix_threshold,
         min_open_interest=args.min_open_interest,
+        show_day_of_week_backtest=args.show_day_of_week_backtest,
+        min_premium_pct_of_strike=args.min_premium_pct_of_strike,
     )
     print_report(result, show_rejected=args.show_rejected)

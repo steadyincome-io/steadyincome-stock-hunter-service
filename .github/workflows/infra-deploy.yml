@@ -1,0 +1,50 @@
+name: Deploy GCP trading-assistant infra
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-deploy.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: infra-deploy
+  cancel-in-progress: false
+
+# id-token: write is what lets GitHub mint the OIDC token that GCP's
+# Workload Identity Federation trusts -- no long-lived JSON key is stored
+# as a secret anywhere in this repo.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "projects/444713174784/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions-deployer@stock-hunter-trading.iam.gserviceaccount.com"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.3"
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Plan
+        run: terraform plan -input=false
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve

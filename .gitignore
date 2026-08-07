@@ -30,3 +30,11 @@ cache/
 
 # Logs
 *.log
+
+# Terraform (infra/terraform) -- state lives in the remote GCS backend, never
+# locally or in git; .terraform.lock.hcl IS committed (dependency pinning)
+infra/terraform/.terraform/
+infra/terraform/.build/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/*.tfplan
