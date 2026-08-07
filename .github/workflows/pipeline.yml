@@ -3,6 +3,13 @@ name: Run equity intelligence pipeline
 on:
   push:
     branches: [main]
+    # Only re-run the pipeline when the actual pipeline code changes. This
+    # deliberately does NOT include requirements.txt/Pipfile or tests/ or
+    # ui/ -- a dependency bump or dashboard change won't auto-trigger a run
+    # under this filter. If that turns out to matter, add those paths too.
+    paths:
+      - "src/stock_hunter/**/*.py"
+      - ".github/workflows/pipeline.yml"
   workflow_dispatch: {}
 
 concurrency:

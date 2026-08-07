@@ -202,11 +202,55 @@ gcloud storage buckets update gs://stock-hunter-trading-tfstate \
 
 ---
 
+## Gotchas hit on the first real `terraform apply`
+
+Two errors showed up that weren't visible from `terraform validate`/`plan` alone
+-- both are one-time, project-level fixes, already applied for this project, but
+recorded here in case this is ever rebuilt from scratch.
+
+**1. `candidate_finder` failed with an Artifact Registry permission error:**
+```
+Unable to retrieve the repository metadata for .../repositories/gcf-artifacts.
+Ensure that the Cloud Functions service agent has 'artifactregistry.repositories.list'
+and 'artifactregistry.repositories.get' permissions.
+```
+This is a known first-use-of-Cloud-Functions-gen2-in-a-project quirk: Google
+auto-creates a "Cloud Functions service agent"
+(`service-PROJECT_NUMBER@gcf-admin-robot.iam.gserviceaccount.com`), but it doesn't
+always get `roles/artifactregistry.reader` on the auto-created build-artifacts
+repo automatically. Fix (this identity can't even be `describe`d by a normal
+Owner account -- that's expected for Google-managed service agents -- just bind
+the role directly):
+```bash
+PROJECT_NUMBER=$(gcloud projects describe stock-hunter-trading --format="value(projectNumber)")
+gcloud projects add-iam-policy-binding stock-hunter-trading \
+  --member="serviceAccount:service-${PROJECT_NUMBER}@gcf-admin-robot.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.reader"
+```
+
+**2. `position_monitor` failed with `Secret ... /versions/latest was not found`**
+for all 4 secrets. **Correction to Parts D/E below:** secret values are needed
+*before* the functions can deploy, not "after the first successful apply" as
+originally written here -- `secret_environment_variables` referencing
+`version = "latest"` has nothing to resolve if the secret has zero versions.
+Fix: add at least a placeholder value to each secret so a version exists, then
+come back and do Parts D/E properly (create the real webhook/bot/sheet) and
+overwrite the placeholders with real values -- adding a new secret version
+later is exactly how you rotate/replace one, no Terraform change needed:
+```bash
+for SECRET in discord-webhook-url discord-bot-token discord-channel-id google-sheet-id; do
+  echo -n "PLACEHOLDER_REPLACE_ME" | gcloud secrets versions add "$SECRET" --data-file=- --project=stock-hunter-trading
+done
+```
+
+---
+
 ## Part D — Discord webhook + bot token
 
-Run once, **after** the first successful `terraform apply` has created the
-empty secret containers (`discord-webhook-url`, `discord-bot-token`,
-`discord-channel-id`).
+Ideally done **before** the first `terraform apply` (see the gotcha above --
+the functions won't deploy with an empty secret). If you already applied with
+placeholder values, these steps just add a new version of each secret with the
+real value; no Terraform change or re-apply needed for that.
 
 **1. Create the webhook** (for sending "candidate found"/"close now" notifications — no bot needed for this direction):
 Discord → target channel → Edit Channel → Integrations → Webhooks → New Webhook → copy the URL.
@@ -260,5 +304,5 @@ https://docs.google.com/spreadsheets/d/THIS_PART_IS_THE_SHEET_ID/edit
 - [x] Part A — local gcloud CLI installed, authenticated, project created, billing linked
 - [x] Part B — Workload Identity Federation configured and verified
 - [x] Part C — Terraform state bucket bootstrapped
-- [ ] Part D — Discord webhook + bot created, secrets populated
-- [ ] Part E — Google Sheet created, shared, sheet ID secret populated
+- [ ] Part D — Discord webhook + bot created, secrets populated (currently placeholder values only)
+- [ ] Part E — Google Sheet created, shared, sheet ID secret populated (currently placeholder value only)

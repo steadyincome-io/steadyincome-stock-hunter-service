@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "infra/**"
+      - "!infra/**/*.md"
       - ".github/workflows/infra-deploy.yml"
   workflow_dispatch: {}
 
