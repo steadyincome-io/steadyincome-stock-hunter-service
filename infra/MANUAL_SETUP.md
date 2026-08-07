@@ -98,12 +98,27 @@ gcloud iam service-accounts create "github-actions-deployer" \
 ```bash
 for ROLE in roles/cloudfunctions.admin roles/cloudscheduler.admin roles/storage.admin \
             roles/secretmanager.admin roles/iam.serviceAccountUser \
-            roles/iam.serviceAccountAdmin roles/run.admin; do
+            roles/iam.serviceAccountAdmin roles/run.admin \
+            roles/serviceusage.serviceUsageAdmin; do
   gcloud projects add-iam-policy-binding stock-hunter-trading \
     --member="serviceAccount:github-actions-deployer@stock-hunter-trading.iam.gserviceaccount.com" \
     --role="$ROLE"
 done
 ```
+> **Second correction:** `roles/serviceusage.serviceUsageAdmin` was also missing.
+> `main.tf`'s `google_project_service.required` resources enable APIs
+> (Cloud Functions, Scheduler, Secret Manager, Sheets, Drive, Cloud Build,
+> Artifact Registry, Run) on the project -- a completely separate permission
+> domain ("Service Usage") from anything the other roles above grant. Without
+> it, `terraform apply` fails immediately at that step with
+> `AUTH_PERMISSION_DENIED: Permission denied to enable service [...]` for every
+> API in the list, before creating anything that depends on them. If you
+> already applied without it:
+> ```bash
+> gcloud projects add-iam-policy-binding stock-hunter-trading \
+>   --member="serviceAccount:github-actions-deployer@stock-hunter-trading.iam.gserviceaccount.com" \
+>   --role="roles/serviceusage.serviceUsageAdmin"
+> ```
 > **Correction (added after the fact):** `roles/iam.serviceAccountAdmin` was missing
 > from the original list. `roles/iam.serviceAccountUser` alone only lets you *attach*
 > an existing service account to a resource -- it doesn't let Terraform *create* new
