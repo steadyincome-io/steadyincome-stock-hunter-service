@@ -218,19 +218,26 @@ This is a project-level fix, done once -- it isn't specific to whichever
 function happened to trigger it first.
 
 **2. The function failed with `Secret ... /versions/latest was not found`**
-for every secret it referenced. Secret values are needed *before* the
-function can deploy, not "after the first successful apply" -- a
-`secret_environment_variables` block referencing `version = "latest"` has
-nothing to resolve if the secret has zero versions. Fix: add at least a
-placeholder value to each secret so a version exists, then come back and do
-Parts D/E properly and overwrite the placeholders with real values --
-adding a new secret version later is exactly how you rotate/replace one, no
-Terraform change needed:
-```bash
-for SECRET in discord-webhook-url discord-bot-token discord-channel-id discord-user-id google-sheet-id; do
-  echo -n "PLACEHOLDER_REPLACE_ME" | gcloud secrets versions add "$SECRET" --data-file=- --project=stock-hunter-trading
-done
-```
+for every secret it referenced (and this recurred a second time later, for
+just `discord-user-id`, when it was added after the other 4 already had
+placeholder values). Secret values are needed *before* the function can
+deploy -- a `secret_environment_variables` block referencing `version =
+"latest"` has nothing to resolve if the secret has zero versions.
+
+**Fixed at the root, not just patched:** `secrets.tf` now has a
+`google_secret_manager_secret_version.placeholder` resource (via `for_each`
+over every secret this project defines) that creates a `"PLACEHOLDER_REPLACE_ME"`
+version automatically the moment each secret is created. This is safe to
+manage via Terraform specifically because the placeholder isn't sensitive --
+unlike a real webhook URL/token, it costs nothing for it to sit in Terraform
+state. Any *new* secret added to `secrets.tf` in the future just needs to be
+added to `local.bootstrap_secret_ids` in that same file to get this
+protection automatically -- this whole class of failure shouldn't recur.
+
+Overwriting a placeholder with a real value later (Parts D/E) is unaffected
+by this -- adding a new secret version via `gcloud secrets versions add` is
+exactly how you rotate/replace one, and Terraform doesn't re-read secret
+payload content on later applies, so it never reverts what you've set.
 
 ---
 
