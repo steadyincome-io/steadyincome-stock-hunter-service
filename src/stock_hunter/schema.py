@@ -443,6 +443,11 @@ def migrate_db(db_path=DB_NAME):
         ("distress_risk_level",        "TEXT"),
         ("insider_sentiment_score",    "INTEGER"),
         ("drawdown_opportunity_score", "INTEGER"),
+        # FINRA settlement-based short interest (via yfinance's shortPercentOfFloat)
+        # -- inherently stale by ~2-4 weeks (published twice monthly), refreshed
+        # opportunistically on every pipeline run since it costs no extra API call
+        # (comes from the same stock.info dict already fetched for PE/dividend yield).
+        ("short_percent_of_float",     "REAL"),
     ]
     for col_name, col_type in daily_snapshot_columns:
         try:

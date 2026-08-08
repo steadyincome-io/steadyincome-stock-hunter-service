@@ -55,9 +55,22 @@ CORRELATION_MAX_THRESHOLD = 0.70
 # (covered_call). 5% is a common starting point for short-dated premium
 # selling; adjust via --short-otm-pct for a more/less aggressive strike.
 SHORT_LEG_OTM_PCT = 0.05
-# put_credit_spread only: how many strikes below the short leg to place the
-# long (protective) leg. Counted in strikes, not dollars/percent, so it
-# adapts automatically to each underlying's actual strike spacing.
+# put_credit_spread only: the protective long leg's distance from the short
+# leg is sized dynamically off the short leg's own IV -- a stock priced to
+# move a lot over the trade's life gets a wider spread than one priced to
+# barely move, rather than the same width regardless of volatility. Formula:
+# expected_move = short_strike * (IV/100) * sqrt(days_to_expiration/365)
+# (the standard 1-standard-deviation "expected move" used across the options
+# industry), then width_target = expected_move * EXPECTED_MOVE_WIDTH_FRACTION.
+# 0.35 is a judgment call, not derived from a backtest -- roughly matches the
+# old fixed 2-strike default for a "normal" ~30% IV name, while scaling up
+# for genuinely high-IV names and down for low-IV ones. Walks the real chain
+# outward from the short strike until this dollar target is met (minimum 1
+# strike away, always), so it's never a fractional/impossible width.
+EXPECTED_MOVE_WIDTH_FRACTION = 0.35
+# Fallback only, used when IV data is missing for the short leg (rare) --
+# same "how many strikes away" mechanism this project used before dynamic
+# width existed.
 SPREAD_WIDTH_STRIKES = 2
 
 # ---- single-leg strike walk-in (cash_secured_put / covered_call) ----------
@@ -111,6 +124,17 @@ _BACKTEST_ENTRY_WEEKDAYS = {1: "Tuesday", 2: "Wednesday"}  # datetime.weekday():
 # is a liquidity *warning*, not a hard fill guarantee either way. Applies to
 # every leg (both legs of a spread must individually clear the bar).
 MIN_OPEN_INTEREST = 20
+
+# ---- short interest (informational; scored only for calls-side strategies) --
+# Short interest is a genuinely two-sided signal, not simply "more downside
+# risk": if short sellers get squeezed, they buy back shares, which pushes
+# the price UP -- bad for a short call (covered_call), but actually favorable
+# for a short put (pushes price away from the strike). The bearish-thesis-is-
+# right risk on the put side is real too, but it's directionally ambiguous
+# enough that we don't score it -- only display it. 10% of float is a common
+# practitioner line for "elevated" (GME-style squeeze candidates are well
+# above this; most large-caps sit under 2-3%).
+SHORT_INTEREST_ELEVATED_THRESHOLD = 0.10
 
 STRATEGIES = {
     "cash_secured_put": {
@@ -225,6 +249,7 @@ def load_all_active_candidates(conn):
             ds.price, ds.quality_score, ds.investment_score, ds.risk_score,
             ds.drawdown_opportunity_score, ds.insider_sentiment_score,
             ds.current_drawdown_pct, ds.dividend_yield_pct, ds.low_52w, ds.high_52w,
+            ds.short_percent_of_float,
             dsum.avg_drawdown_pct, dsum.worst_drawdown_pct,
             conc.concentration_risk_score, conc.concentration_risk_summary, conc.concentration_risk_type
         FROM universe u
@@ -519,18 +544,23 @@ def _walk_to_viable_strike(table, current_price, option_side, start_otm_pct,
 def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_vol_pct,
                                   short_otm_pct=SHORT_LEG_OTM_PCT, spread_width_strikes=SPREAD_WIDTH_STRIKES,
                                   risk_free_rate=RISK_FREE_RATE, min_open_interest=MIN_OPEN_INTEREST,
-                                  min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE):
+                                  min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE,
+                                  expected_move_width_fraction=EXPECTED_MOVE_WIDTH_FRACTION):
     """Pick the nearest expiration (target ~4-10 days out for a 'weekly').
 
     For single-leg strategies (cash_secured_put, covered_call), targets a
     strike out-of-the-money by `short_otm_pct` (below current price for puts,
     above for calls) rather than pure at-the-money, matching how these are
-    normally sold. For put_credit_spread, returns full two-leg economics
-    priced off a conservative bid/ask fill (sell the short leg at its bid,
-    buy the long leg at its ask) rather than the more optimistic mid-price --
-    that's the realistic price a marketable limit order could expect to get
-    filled at, not what you'd get in a best-case scenario. Also attaches a
-    Black-Scholes probability-of-finishing-OTM estimate to every candidate.
+    normally sold. For put_credit_spread, the protective long leg's distance
+    from the short leg is sized dynamically off the short leg's own IV (an
+    "expected move" calculation, see EXPECTED_MOVE_WIDTH_FRACTION) rather
+    than a fixed strike count, falling back to `spread_width_strikes` only
+    when IV is unavailable. Economics are priced off a conservative bid/ask
+    fill (sell the short leg at its bid, buy the long leg at its ask) rather
+    than the more optimistic mid-price -- that's the realistic price a
+    marketable limit order could expect to get filled at, not what you'd get
+    in a best-case scenario. Also attaches a Black-Scholes
+    probability-of-finishing-OTM estimate to every candidate.
 
     Returns (snapshot_dict, None) on success, or (None, reason_str) when no
     usable weekly expiration/contract(s)/viable spread can be found.
@@ -560,9 +590,30 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
         if strategy_key == "put_credit_spread":
             short_row = _pick_strike_near_target(table, short_target_price)
             short_idx = table.index[table["strike"] == short_row["strike"]][0]
-            long_idx = short_idx - spread_width_strikes
+            short_strike = float(short_row["strike"])
+            iv_pct = float(short_row["impliedVolatility"]) * 100 if pd.notna(short_row["impliedVolatility"]) else None
+
+            if iv_pct is not None and iv_pct > 0:
+                expected_move_dollars = short_strike * (iv_pct / 100) * math.sqrt(target_days / 365)
+                width_target_dollars = expected_move_dollars * expected_move_width_fraction
+                width_basis = "dynamic"
+                long_idx = short_idx - 1
+                while long_idx >= 0 and (short_strike - float(table.iloc[long_idx]["strike"])) < width_target_dollars:
+                    long_idx -= 1
+            else:
+                expected_move_dollars = None
+                width_target_dollars = None
+                width_basis = "fixed"
+                long_idx = short_idx - spread_width_strikes
+
             if long_idx < 0:
-                reason = f"Not enough strikes below the short leg to build a {spread_width_strikes}-strike-wide spread"
+                if width_basis == "dynamic":
+                    reason = (
+                        f"Not enough strikes below the short leg to reach the IV-based width target "
+                        f"(${width_target_dollars:.2f}, from a ${expected_move_dollars:.2f} expected move)"
+                    )
+                else:
+                    reason = f"Not enough strikes below the short leg to build a {spread_width_strikes}-strike-wide spread (IV unavailable)"
                 warning(f"{ticker}: {reason}")
                 return None, reason
             long_row = table.iloc[long_idx]
@@ -581,7 +632,6 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
             short_ask = float(short_row["ask"]) if pd.notna(short_row["ask"]) else 0.0
             long_bid = float(long_row["bid"]) if pd.notna(long_row["bid"]) else 0.0
             long_ask = float(long_row["ask"]) if pd.notna(long_row["ask"]) else 0.0
-            short_strike = float(short_row["strike"])
             long_strike = float(long_row["strike"])
 
             # Primary: conservative bid/ask fill -- sell the short leg at its
@@ -606,7 +656,6 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
             breakeven = round(short_strike - net_credit, 2)
             return_on_risk_pct = round((max_profit / max_loss) * 100, 1) if max_loss > 0 else None
 
-            iv_pct = float(short_row["impliedVolatility"]) * 100 if pd.notna(short_row["impliedVolatility"]) else None
             iv_premium_pct = (iv_pct - realized_vol_pct) if (iv_pct is not None and realized_vol_pct is not None) else None
             confidence_pct = probability_finishes_otm(
                 "puts", current_price, short_strike, target_days, iv_pct, risk_free_rate
@@ -629,6 +678,9 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                 "iv_premium_vs_realized_pct": round(iv_premium_pct, 1) if iv_premium_pct is not None else None,
                 "short_open_interest": short_oi,
                 "long_open_interest": long_oi,
+                "width_basis": width_basis,
+                "expected_move_dollars": round(expected_move_dollars, 2) if expected_move_dollars is not None else None,
+                "width_target_dollars": round(width_target_dollars, 2) if width_target_dollars is not None else None,
             }, None
 
         # Single-leg strategies (cash_secured_put, covered_call): short_otm_pct
@@ -954,12 +1006,29 @@ def apply_day_of_week_penalty(base_score, dow_backtest, penalty_factor=0.5):
     return round(base_score * (1 - (avg_breach_pct / 100) * penalty_factor), 1)
 
 
+def apply_short_squeeze_penalty(base_score, row, strategy_key, penalty_factor=0.5):
+    """Only applies to covered_call -- the only calls-side strategy this
+    screener itself produces (see SHORT_INTEREST_ELEVATED_THRESHOLD above for
+    why puts-side strategies are deliberately left unscored). Scales down
+    proportionally to how far short_percent_of_float sits above the elevated
+    threshold, capped at penalty_factor (e.g. 0.5 = never more than a 50% cut,
+    reached once short interest hits 2x the threshold or more)."""
+    if base_score is None or strategy_key != "covered_call":
+        return base_score
+    pct = row.get("short_percent_of_float")
+    if pct is None or pct < SHORT_INTEREST_ELEVATED_THRESHOLD:
+        return base_score
+    excess = min((pct - SHORT_INTEREST_ELEVATED_THRESHOLD) / SHORT_INTEREST_ELEVATED_THRESHOLD, 1.0)
+    return round(base_score * (1 - excess * penalty_factor), 1)
+
+
 def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, pool_size=0,
                   short_otm_pct=SHORT_LEG_OTM_PCT, spread_width_strikes=SPREAD_WIDTH_STRIKES,
                   sma_period=SMA_TREND_FILTER_PERIOD, risk_free_rate=RISK_FREE_RATE,
                   market_index=MARKET_INDEX_TICKER, market_sma_period=MARKET_SMA_PERIOD,
                   vix_threshold=VIX_PAUSE_THRESHOLD, min_open_interest=MIN_OPEN_INTEREST,
-                  show_day_of_week_backtest=True, min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE):
+                  show_day_of_week_backtest=True, min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE,
+                  expected_move_width_fraction=EXPECTED_MOVE_WIDTH_FRACTION):
     if strategy_key not in STRATEGIES:
         raise ValueError(f"Unknown strategy '{strategy_key}'. Choose from: {list(STRATEGIES)}")
 
@@ -1059,6 +1128,7 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
             short_otm_pct=short_otm_pct, spread_width_strikes=spread_width_strikes,
             risk_free_rate=risk_free_rate, min_open_interest=min_open_interest,
             min_premium_pct_of_strike=min_premium_pct_of_strike,
+            expected_move_width_fraction=expected_move_width_fraction,
         )
         if option_snapshot is None:
             rejections[ticker] = reason or "No usable weekly option data"
@@ -1078,6 +1148,7 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
     step("Step 4b: ranking by composite edge score")
     for row in enriched:
         row["edge_score"] = compute_edge_score(row)
+        row["edge_score"] = apply_short_squeeze_penalty(row["edge_score"], row, strategy_key)
     enriched.sort(key=lambda r: (r.get("edge_score") if r.get("edge_score") is not None else -999), reverse=True)
 
     step("Step 5: cross-position correlation check")
@@ -1136,6 +1207,13 @@ def _format_concentration_risk(r):
     return str(score) if score is not None else "N/A"
 
 
+def _format_short_interest(r):
+    """N/A when yfinance doesn't have this ticker's short interest (common
+    for smaller/newer names, and for any ETF) -- distinct from 0%."""
+    pct = r.get("short_percent_of_float")
+    return f"{pct * 100:.1f}" if pct is not None else "N/A"
+
+
 def _print_concentration_detail(candidates):
     """Supplementary list (not a table column, too much width) of the actual
     concentration disclosure text for any candidate with a meaningful score."""
@@ -1147,6 +1225,37 @@ def _print_concentration_detail(candidates):
     for r in flagged:
         ctype = r.get("concentration_risk_type") or "none"
         print(f"  {r['ticker']} [{ctype}, score {r['concentration_risk_score']}]: {r['concentration_risk_summary']}")
+
+
+def _print_short_squeeze_detail(candidates, strategy_key):
+    """covered_call only -- see SHORT_INTEREST_ELEVATED_THRESHOLD/
+    apply_short_squeeze_penalty for why this doesn't apply to puts-side
+    strategies."""
+    if strategy_key != "covered_call":
+        return
+    flagged = [r for r in candidates if (r.get("short_percent_of_float") or 0) >= SHORT_INTEREST_ELEVATED_THRESHOLD]
+    if not flagged:
+        return
+    print()
+    print(
+        f"Short squeeze risk (>= {SHORT_INTEREST_ELEVATED_THRESHOLD * 100:.0f}% of float short -- already "
+        "factored into Edge above; a squeeze pushes the price UP, which can breach a short call strike):"
+    )
+    for r in flagged:
+        print(f"  {r['ticker']}: {_format_short_interest(r)}% of float short")
+
+
+def _print_spread_width_detail(candidates):
+    """put_credit_spread only: notes which candidates fell back to the fixed
+    --spread-width-strikes count because the short leg's IV was unavailable,
+    instead of the normal IV-based dynamic width."""
+    fallback = [r for r in candidates if r.get("width_basis") == "fixed"]
+    if not fallback:
+        return
+    print()
+    print("Width basis (IV unavailable for these -- used the fixed --spread-width-strikes fallback instead of the dynamic IV-based width):")
+    for r in fallback:
+        print(f"  {r['ticker']}")
 
 
 def _print_strike_walk_detail(candidates):
@@ -1191,10 +1300,10 @@ def _print_day_of_week_backtest(candidates):
         print(f"  {r['ticker']}: " + " | ".join(parts))
 
 
-def _print_single_leg_report(candidates):
+def _print_single_leg_report(candidates, strategy_key):
     header = (
         f"{'Ticker':<8}{'Edge':>7}  {'Sector':<16}{'Price':>9}{'Qual':>6}{'Risk':>6}"
-        f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}"
+        f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}{'ShortFlt%':>10}"
         f"{'Exp':>12}{'Strike':>8}{'Premium':>8}{'Mid':>7}{'BrkEven':>9}"
         f"{'IV%':>7}{'RV%':>7}{'IVprem':>8}{'ProbOTM%':>9}{'OI':>7}"
     )
@@ -1209,7 +1318,7 @@ def _print_single_leg_report(candidates):
             f"{(r.get('avg_drawdown_pct') if r.get('avg_drawdown_pct') is not None else 0):>7.1f}"
             f"{(r.get('pct_above_52w_low') if r.get('pct_above_52w_low') is not None else 0):>10.1f}"
             f"{(r.get('insider_sellers') or 0):>9}{_format_insider_value_m(r):>9.1f}"
-            f"{_format_concentration_risk(r):>9}"
+            f"{_format_concentration_risk(r):>9}{_format_short_interest(r):>10}"
             f"{r['expiration']:>12}{r['strike']:>8.1f}{r['premium']:>8.2f}{r['mid_price']:>7.2f}{r['breakeven']:>9.2f}"
             f"{(r.get('implied_volatility_pct') or 0):>7.1f}{(r.get('realized_volatility_pct') or 0):>7.1f}"
             f"{(r.get('iv_premium_vs_realized_pct') or 0):>8.1f}"
@@ -1226,6 +1335,9 @@ def _print_single_leg_report(candidates):
     print("informational only, not used to filter candidates (see README for why).")
     print("ConcRisk = LLM-derived 0-100 estimate of structural product/customer/supplier/geographic")
     print("concentration from the latest 10-K -- informational only, not used to filter candidates.")
+    print("ShortFlt% = % of float sold short (FINRA settlement data via yfinance, stale by ~2-4 weeks by nature).")
+    print("Only factored into Edge for covered_call (a squeeze pushes price UP, risking the short call) --")
+    print("informational only for cash_secured_put, since the same squeeze would push price away from that strike.")
     print("Premium = bid price at a realistic fill (what a buyer is currently offering, i.e. what you as the")
     print("seller could realistically collect right now) -- the primary, conservative figure, same philosophy")
     print("as put_credit_spread's Credit. Mid = mid-to-mid price, shown only as an upside reference, not what")
@@ -1236,6 +1348,7 @@ def _print_single_leg_report(candidates):
     if any(r.get("price_source", "live") != "live" for r in candidates):
         print("* price is the stored daily_snapshot value, not a live quote (yfinance fetch failed for this ticker).")
     _print_concentration_detail(candidates)
+    _print_short_squeeze_detail(candidates, strategy_key)
     _print_strike_walk_detail(candidates)
     _print_day_of_week_backtest(candidates)
 
@@ -1243,7 +1356,7 @@ def _print_single_leg_report(candidates):
 def _print_spread_report(candidates):
     header = (
         f"{'Ticker':<8}{'Edge':>7}  {'Sector':<11}{'Price':>9}{'Qual':>6}{'Risk':>6}"
-        f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}"
+        f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}{'ShortFlt%':>10}"
         f"{'Exp':>12}{'Short':>7}{'Long':>7}{'Width':>7}{'Credit':>8}{'MidCr':>7}"
         f"{'MaxLoss':>9}{'RoR%':>7}{'BrkEven':>9}{'IV%':>7}{'ProbOTM%':>9}"
     )
@@ -1258,7 +1371,7 @@ def _print_spread_report(candidates):
             f"{(r.get('avg_drawdown_pct') if r.get('avg_drawdown_pct') is not None else 0):>7.1f}"
             f"{(r.get('pct_above_52w_low') if r.get('pct_above_52w_low') is not None else 0):>10.1f}"
             f"{(r.get('insider_sellers') or 0):>9}{_format_insider_value_m(r):>9.1f}"
-            f"{_format_concentration_risk(r):>9}"
+            f"{_format_concentration_risk(r):>9}{_format_short_interest(r):>10}"
             f"{r['expiration']:>12}{r['short_strike']:>7.1f}{r['long_strike']:>7.1f}{r['spread_width']:>7.1f}"
             f"{r['net_credit']:>8.2f}{r['mid_credit']:>7.2f}{r['max_loss']:>9.2f}"
             f"{(r.get('return_on_risk_pct') or 0):>7.1f}{r['breakeven']:>9.2f}"
@@ -1276,7 +1389,13 @@ def _print_spread_report(candidates):
     print("informational only, not used to filter candidates (see README for why).")
     print("ConcRisk = LLM-derived 0-100 estimate of structural product/customer/supplier/geographic")
     print("concentration from the latest 10-K -- informational only, not used to filter candidates.")
-    print("Short = short put strike (sold), Long = protective put strike (bought), Width = strike distance,")
+    print("ShortFlt% = % of float sold short (FINRA settlement data via yfinance, stale by ~2-4 weeks by nature)")
+    print("-- purely informational here (a squeeze would push price away from a short put, not toward it),")
+    print("never factored into Edge for put_credit_spread.")
+    print("Short = short put strike (sold), Long = protective put strike (bought), Width = strike distance --")
+    print("sized dynamically off the short leg's own IV-implied expected move (--expected-move-width-fraction,")
+    print("default 0.35), not a fixed strike count; falls back to --spread-width-strikes only when IV is")
+    print("unavailable (see the Width basis detail below if any candidate used the fallback).")
     print("Credit = net credit at a realistic bid/ask fill (sell short at bid, buy long at ask) -- the primary,")
     print("conservative figure everything else here is computed from. MidCr = what a mid-to-mid fill would give,")
     print("shown only as an upside reference, not what you should plan around. MaxLoss = width - Credit,")
@@ -1286,6 +1405,7 @@ def _print_spread_report(candidates):
     if any(r.get("price_source", "live") != "live" for r in candidates):
         print("* price is the stored daily_snapshot value, not a live quote (yfinance fetch failed for this ticker).")
     _print_concentration_detail(candidates)
+    _print_spread_width_detail(candidates)
     _print_day_of_week_backtest(candidates)
 
 
@@ -1318,7 +1438,7 @@ def print_report(result, show_rejected=True):
     elif strategy_key == "put_credit_spread":
         _print_spread_report(candidates)
     else:
-        _print_single_leg_report(candidates)
+        _print_single_leg_report(candidates, strategy_key)
 
     print()
     info(f"{len(result['avoid_list'])} tickers were excluded by the avoid list (distress/8-K/risk-score signals).")
@@ -1344,8 +1464,13 @@ if __name__ == "__main__":
                               "evaluate the entire eligible universe")
     parser.add_argument("--short-otm-pct", type=float, default=SHORT_LEG_OTM_PCT,
                          help="How far OTM to target the short leg, e.g. 0.05 = 5%% below price for puts, above for calls")
+    parser.add_argument("--expected-move-width-fraction", type=float, default=EXPECTED_MOVE_WIDTH_FRACTION,
+                         help="put_credit_spread only: protective long leg's distance from the short leg, as a "
+                              "fraction of the short leg's own IV-implied expected move over the trade's life "
+                              "(default 0.35). Higher = wider spreads on volatile names, lower = narrower")
     parser.add_argument("--spread-width-strikes", type=int, default=SPREAD_WIDTH_STRIKES,
-                         help="put_credit_spread only: number of strikes below the short leg for the protective long leg")
+                         help="put_credit_spread only: fallback fixed strike-count width, used only when the "
+                              "short leg's IV is unavailable (rare)")
     parser.add_argument("--sma-period", type=int, default=SMA_TREND_FILTER_PERIOD,
                          help="Trend filter: require price above this N-day SMA for bullish/neutral strategies")
     parser.add_argument("--risk-free-rate", type=float, default=RISK_FREE_RATE,
@@ -1380,6 +1505,7 @@ if __name__ == "__main__":
         pool_size=args.pool_size,
         short_otm_pct=args.short_otm_pct,
         spread_width_strikes=args.spread_width_strikes,
+        expected_move_width_fraction=args.expected_move_width_fraction,
         sma_period=args.sma_period,
         risk_free_rate=args.risk_free_rate,
         market_index=args.market_index,

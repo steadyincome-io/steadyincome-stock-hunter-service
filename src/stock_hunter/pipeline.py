@@ -594,6 +594,11 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                 # own figures only when SEC data is missing (e.g. financials not synced yet).
                 stock_info = stock.info if hasattr(stock, 'info') else {}
                 fwd_pe = float(stock_info.get('forwardPE', 24.0) or 24.0)
+                # FINRA settlement data via yfinance, e.g. 0.1354 = 13.54% of
+                # float sold short -- stale by design (published twice monthly),
+                # not something that gets fresher by running the pipeline more
+                # often. None when yfinance doesn't have it for this ticker.
+                short_pct_float = stock_info.get('shortPercentOfFloat')
 
                 sec_valuation = (
                     _sec_derived_valuation(current_price, stock_financials_map.get(ticker))
@@ -735,6 +740,7 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                         "distress_risk_level": (distress_result or {}).get("risk_level"),
                         "insider_sentiment_score": insider_score if asset_type == 'Stock' else None,
                         "drawdown_opportunity_score": drawdown_opp_score,
+                        "short_percent_of_float": short_pct_float,
                     },
                     available_columns=daily_snapshot_columns,
                 )

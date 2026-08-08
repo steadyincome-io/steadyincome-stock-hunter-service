@@ -1,1 +1,5 @@
 functions-framework==3.*
+yfinance>=0.2.36
+requests>=2.31.0
+google-api-python-client
+google-auth

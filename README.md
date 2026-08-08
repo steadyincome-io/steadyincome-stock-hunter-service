@@ -595,8 +595,9 @@ What it does, in order (this is the actual execution order -- the code's own ste
 4. **Options chain check** -- pulls the nearest ~1-week expiration (4-10 days out) via `yfinance`, then:
    - **cash_secured_put / covered_call** (single leg): picks a strike `--short-otm-pct` (default 5%)
      out-of-the-money -- below current price for puts, above for calls -- rather than at-the-money.
-   - **put_credit_spread** (two legs): sells that same OTM strike and buys a further-out-of-the-money
-     protective put `--spread-width-strikes` (default 2) strikes lower, then reports full spread
+   - **put_credit_spread** (two legs): sells that same OTM strike, then buys a further-out-of-the-money
+     protective put -- how far is sized **dynamically off the short leg's own IV**, not a fixed strike
+     count (see "Dynamic spread width" below for the exact formula), then reports full spread
      economics priced off a **conservative bid/ask fill** (sell the short leg at its bid, buy the long
      leg at its ask) as the primary `Credit`/`MaxLoss`/`RoR%`/`BrkEven` figures -- not the more
      optimistic mid-price, which assumes a fill you might not actually get. The mid-price value is
@@ -708,6 +709,25 @@ with no viable strike found. Which candidates walked, and how far, is shown in a
 of the report so it's never silent. `put_credit_spread` doesn't need this -- its own non-positive-credit
 check already serves a similar purpose.
 
+**Dynamic spread width (`put_credit_spread` only, `--expected-move-width-fraction`, default 0.35):**
+the protective long leg's distance from the short leg used to be a fixed strike count
+(`--spread-width-strikes`) regardless of how volatile the underlying actually was -- the same width for
+a sleepy blue chip and a name that swings 5% a day. Now it's sized off the short leg's own IV via the
+standard 1-standard-deviation "expected move" formula:
+```
+expected_move = short_strike * (IV / 100) * sqrt(days_to_expiration / 365)
+width_target  = expected_move * --expected-move-width-fraction
+```
+then the real option chain is walked outward from the short strike (minimum 1 strike away, always) until
+the cumulative strike distance first meets or exceeds `width_target`. 0.35 is a judgment call, not derived
+from a backtest -- it was chosen because it roughly reproduces the old fixed-2-strike default for a
+"normal" ~30% IV name, while genuinely widening for high-IV names (verified: an 80% IV case produced a
+4.5x wider spread than a 15% IV case at the same spot price/DTE) and narrowing for low-IV ones. Falls back
+to the fixed `--spread-width-strikes` count only when the short leg's IV is unavailable (rare) -- shown in
+a "Width basis" report section when that happens, so the fallback is never silent. If the chain doesn't
+have enough strikes to reach the IV-based target, that candidate is rejected with the specific dollar
+target and expected move shown, same as the existing "not enough strikes" case.
+
 **Edge Score (`Edge` column, drives sort order in both report tables):** a composite 0-100 ranking score
 blending everything else already computed for a candidate, so you don't have to eyeball a dozen columns
 to judge which candidate is actually best. Weights (`EDGE_SCORE_WEIGHTS` in `premium_screener.py`) are a
@@ -725,10 +745,30 @@ inspectable and adjustable, not a black box:
 | Liquidity (log-scaled OI) | 5% | Diminishing returns above ~500 OI, so this can't dominate the score |
 
 After the Edge Score is computed and used to rank/select candidates (feeding into the correlation
-diversification step), the day-of-week backtest below scales it down further for final candidates based
-on their empirical historical breach rate -- a 0% breach rate leaves the score unchanged, a 100% breach
-rate would halve it. This is deliberately a screening aid for ranking already-filtered candidates against
-each other, not a standalone probability or expected-return estimate.
+diversification step), two further adjustments can scale it down for final candidates:
+
+1. The day-of-week backtest below, based on their empirical historical breach rate -- a 0% breach rate
+   leaves the score unchanged, a 100% breach rate would halve it.
+2. `apply_short_squeeze_penalty`, **`covered_call` only** -- a short call is at risk if the underlying
+   spikes up, and a stock with a high percentage of its float already sold short is more prone to exactly
+   that (a short squeeze forces short sellers to buy back shares, pushing price up further). Once
+   `short_percent_of_float` (from `daily_snapshot`, sourced from yfinance's FINRA-derived data -- see the
+   "Short interest" section below for staleness caveats) exceeds 10%, the score scales down proportionally,
+   capped at a 50% cut once short interest reaches 2x that threshold (20%+). Deliberately **not** applied
+   to `cash_secured_put`/`put_credit_spread` -- a squeeze pushes price *away* from a short put's strike,
+   so the same signal that's a warning sign for a short call is not a warning sign for a short put.
+
+Both are deliberately screening aids for ranking already-filtered candidates against each other, not a
+standalone probability or expected-return estimate.
+
+**Short interest (`ShortFlt%` column):** percentage of a stock's float currently sold short, pulled from
+the same `yfinance` `.info` call already made for PE/dividend yield (no extra API call). This is FINRA
+settlement data republished twice monthly with a multi-day lag -- it does not get fresher by running the
+pipeline more often, and `N/A` (not `0%`) means yfinance simply doesn't have it for that ticker, most
+often smaller/newer names or ETFs. High short interest is a genuinely two-sided signal, not simply "more
+downside risk": it raises real squeeze risk for a short call (factored into Edge Score above), but the
+same squeeze dynamic is actually favorable for a short put (pushes price away from the strike) -- so it's
+shown as pure information for `cash_secured_put`/`put_credit_spread`, never factored into their score.
 
 **Day-of-week entry backtest (`--show-day-of-week-backtest`, on by default):** for the final candidates
 only (after all other filters and correlation diversification), backtests whether entering on a Tuesday

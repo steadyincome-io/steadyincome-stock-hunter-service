@@ -50,3 +50,18 @@ resource "google_secret_manager_secret" "google_sheet_id" {
 
   depends_on = [google_project_service.required]
 }
+
+# Whose reaction counts as a real confirmation -- position_monitor checks
+# incoming reactions against this Discord user ID before treating a ✅ as
+# "I actually placed/closed this trade" (find your ID: enable Developer Mode
+# in Discord, right-click your own name, Copy User ID).
+resource "google_secret_manager_secret" "discord_user_id" {
+  secret_id = "discord-user-id"
+  project   = var.project_id
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
