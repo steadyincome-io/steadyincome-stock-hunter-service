@@ -80,12 +80,17 @@ resource "google_secret_manager_secret" "discord_user_id" {
 }
 
 locals {
+  # google_secret_manager_secret_version.secret needs the FULL resource path
+  # (projects/{project}/secrets/{secret_id}), not the bare secret_id -- using
+  # .secret_id here instead of .id produced a malformed API call
+  # (.../v1/discord-webhook-url:addVersion, missing the projects/.../secrets/
+  # prefix entirely) that 404'd on every secret.
   bootstrap_secret_ids = [
-    google_secret_manager_secret.discord_webhook_url.secret_id,
-    google_secret_manager_secret.discord_bot_token.secret_id,
-    google_secret_manager_secret.discord_channel_id.secret_id,
-    google_secret_manager_secret.discord_user_id.secret_id,
-    google_secret_manager_secret.google_sheet_id.secret_id,
+    google_secret_manager_secret.discord_webhook_url.id,
+    google_secret_manager_secret.discord_bot_token.id,
+    google_secret_manager_secret.discord_channel_id.id,
+    google_secret_manager_secret.discord_user_id.id,
+    google_secret_manager_secret.google_sheet_id.id,
   ]
 }
 
