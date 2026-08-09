@@ -43,7 +43,18 @@ jobs:
       - name: Run universe scan
         env:
           PYTHONPATH: src
-        run: python -u -m stock_hunter.universe_scanner
+        run: |
+          set -euo pipefail
+          python -u -m stock_hunter.universe_scanner 2>&1 | tee universe_scan.log
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: universe-scan-log-${{ github.run_id }}
+          path: universe_scan.log
+          retention-days: 30
+          if-no-files-found: ignore
 
       - name: Commit and push the resulting CSV
         run: |
