@@ -482,6 +482,35 @@ If the primary provider returns HTTP 429 and `NARRATIVE_FALLBACK_PROVIDER` is se
 - `--reset-financials` will now rebuild the last 365 days of `10-K` and `10-Q` filings instead of a 5-year filing history.
 - If the SEC filing rows already exist and the pipeline failed during the LLM pass, use `--resume-llm` to continue from Step 1b without refetching filings or reprocessing complete LLM rows.
 
+### Weekly $100B universe scan
+
+The `universe` table's default seed (`DEFAULT_UNIVERSE` in `schema.py`) is a hand-curated, static list -- it
+doesn't update itself as companies grow past or shrink below $100B. `.github/workflows/universe-scan.yml`
+runs weekly (Sunday, plus `workflow_dispatch` for a manual run) and keeps this genuinely current instead:
+
+1. **Phase 1 (~60 min, deliberately conservative pace)** -- downloads the free, keyless NASDAQ Trader
+   listed-company files (`nasdaqlisted.txt` + `otherlisted.txt`, ~13,000 symbols across NYSE/NASDAQ/etc.,
+   stocks + ETFs, each file already flags which are ETFs) and checks every single one: market cap for
+   stocks (`Ticker.fast_info['marketCap']`), AUM for ETFs (`Ticker.info['totalAssets']` -- ETFs don't have
+   a market cap in the traditional sense, and `fast_info` doesn't expose AUM, confirmed by testing both
+   against real tickers). An earlier plan to batch this via Yahoo's `v7/finance/quote` endpoint turned out
+   to be dead on arrival -- that endpoint now requires session/crumb auth and returned a flat `401` when
+   tested live, so this is genuinely one request per symbol, paced deliberately slowly (a small sleep
+   between calls) specifically to avoid Yahoo throttling/blocking a scan this size, not for speed.
+2. **Phase 2 (cheap)** -- for just the small survivor list from Phase 1 (currently a few hundred names),
+   one more pass fetches name/sector/industry, producing the same `(ticker, name, asset_type, sector,
+   industry, market_cap)` shape `DEFAULT_UNIVERSE` already uses.
+3. Writes `data/universe_100b.csv` and commits it back to the repo.
+
+`pipeline.py` calls `schema.sync_universe_from_csv()` on every run (right after `init_db()`/`migrate_db()`)
+to reconcile the `universe` table against whatever this CSV currently says: every ticker in the CSV is
+upserted as `active`, and any ticker that's currently `active` but *not* in the CSV gets marked `inactive`
+(not deleted -- its `price_history`/`sec_financials`/etc. stay intact, it just stops being actively
+screened). This makes membership genuinely two-way: a ticker that drops below $100B falls out of the
+active universe on the next pipeline run after that happens, rather than lingering forever. If the CSV
+doesn't exist yet (e.g. before the first weekly scan has ever run), this step no-ops entirely and
+`pipeline.py` just keeps working off `DEFAULT_UNIVERSE`'s seed.
+
 ### 4. Query 10-K and 10-Q Financials from the SQLite Database
 
 Run the query helper to inspect top drawdowns, SEC Form 4 insider trades, and 10-K / 10-Q financial reports from terminal:

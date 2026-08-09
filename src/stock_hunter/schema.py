@@ -1,8 +1,12 @@
+import csv
 import sqlite3
 import os
-from .logger import info, success
+from .logger import info, success, warning
 
 DB_NAME = "drawdown_analyzer.db"
+# Produced weekly by universe_scanner.py (see .github/workflows/universe-scan.yml),
+# not by pipeline.py itself -- see sync_universe_from_csv() below.
+UNIVERSE_CSV_PATH = "data/universe_100b.csv"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS universe (
@@ -585,6 +589,72 @@ def migrate_db(db_path=DB_NAME):
         success(f"Migration added {added} table(s)/column(s)")
     else:
         success("Migration: schema already up to date")
+
+
+def sync_universe_from_csv(db_path=DB_NAME, csv_path=UNIVERSE_CSV_PATH):
+    """Reconciles the `universe` table against a weekly $100B-crossing scan
+    (see universe_scanner.py): every ticker in the CSV is upserted as active,
+    and every ticker that's currently active but NOT in the CSV gets marked
+    inactive -- not deleted, so its price_history/sec_financials/etc. stay
+    intact, it just stops being actively screened. This is what makes
+    "crossing" membership two-way: a ticker that later drops below $100B
+    naturally falls off the active universe on the next pipeline run.
+
+    No-ops entirely if the CSV doesn't exist yet (e.g. before the first
+    weekly scan has ever run) or is empty, so pipeline.py keeps working off
+    whatever's already seeded (DEFAULT_UNIVERSE on a fresh DB) rather than
+    breaking. Returns the number of tickers synced as active (0 if no-op).
+    """
+    if not os.path.exists(csv_path):
+        info(f"No universe scan CSV found at {csv_path} -- keeping existing universe as-is")
+        return 0
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    if not rows:
+        warning(f"{csv_path} is empty -- keeping existing universe as-is")
+        return 0
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    csv_tickers = set()
+    for row in rows:
+        ticker = row["ticker"]
+        csv_tickers.add(ticker)
+        cursor.execute("""
+            INSERT INTO universe (ticker, name, asset_type, sector, industry, market_cap, status, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'))
+            ON CONFLICT(ticker) DO UPDATE SET
+                name = excluded.name,
+                asset_type = excluded.asset_type,
+                sector = excluded.sector,
+                industry = excluded.industry,
+                market_cap = excluded.market_cap,
+                status = 'active',
+                last_updated = datetime('now')
+        """, (
+            ticker, row["name"], row["asset_type"], row["sector"], row["industry"],
+            float(row["market_cap"]),
+        ))
+
+    cursor.execute("SELECT ticker FROM universe WHERE status = 'active'")
+    currently_active = {r[0] for r in cursor.fetchall()}
+    dropped = currently_active - csv_tickers
+    for ticker in dropped:
+        cursor.execute(
+            "UPDATE universe SET status = 'inactive', last_updated = datetime('now') WHERE ticker = ?",
+            (ticker,),
+        )
+
+    conn.commit()
+    conn.close()
+    success(
+        f"Universe synced from {csv_path}: {len(csv_tickers)} active, "
+        f"{len(dropped)} marked inactive (dropped below threshold)"
+    )
+    return len(csv_tickers)
 
 
 if __name__ == "__main__":

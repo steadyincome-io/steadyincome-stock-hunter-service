@@ -2,7 +2,7 @@ import sqlite3
 import time
 import json
 from datetime import datetime
-from .schema import init_db, migrate_db, DB_NAME
+from .schema import init_db, migrate_db, sync_universe_from_csv, DB_NAME, UNIVERSE_CSV_PATH
 from .logger import banner, step, info, success, warning, error, ticker_start, ticker_done, progress
 from .sec_edgar_worker import sync_sec_insider_data
 from .sec_etf_worker import sync_etf_reports
@@ -408,6 +408,12 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
     # tables didn't exist yet.
     init_db(db_path)
     migrate_db(db_path)
+
+    # Reconcile the active universe against the weekly $100B-crossing scan
+    # (see universe_scanner.py / .github/workflows/universe-scan.yml) if one
+    # has ever run -- no-ops on a fresh setup with no CSV yet, falling back
+    # to DEFAULT_UNIVERSE's seed from init_db() above.
+    sync_universe_from_csv(db_path, UNIVERSE_CSV_PATH)
 
     banner(f"Starting Drawdown Analyzer pipeline run [{run_id}]")
     info(f"Timestamp: {now_str}")
