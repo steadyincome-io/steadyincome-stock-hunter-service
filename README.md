@@ -827,6 +827,36 @@ concentration signal above, no true IV Rank (see above), and `yfinance`'s implie
 calendar/VIX data can occasionally be stale or missing for a given ticker (the screener logs and skips
 or fails open rather than failing the whole run).
 
+## Infra: position monitor (GCP)
+
+The options-position monitor (profit-target/stop-loss/expiration Discord alerts) runs as a Cloud Function
+gen2 named `position-monitor` in `us-central1`, invoked every 10 minutes by the `position-monitor-every-10-min`
+Cloud Scheduler job. Full setup (Workload Identity Federation, Terraform, secrets, the Google Sheet schema)
+is documented in `infra/MANUAL_SETUP.md`; this section is just the day-to-day `gcloud` commands for checking
+whether it's actually running.
+
+```bash
+# Function status/config (URL, runtime, current revision, env vars it sees)
+gcloud functions describe position-monitor --region=us-central1 --gen2 --project=stock-hunter-trading
+
+# Tail recent logs (simplest option -- wraps the Cloud Run logs underneath)
+gcloud functions logs read position-monitor --region=us-central1 --gen2 --limit=50 --project=stock-hunter-trading
+
+# Same logs, more filtering power (gen2 functions run on Cloud Run under the hood,
+# so Cloud Logging's resource.type is cloud_run_revision, not cloud_function) --
+# useful for e.g. only errors, or a specific time window
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="position-monitor" AND severity>=ERROR' \
+  --limit=50 --project=stock-hunter-trading
+
+# Is Cloud Scheduler actually firing it, and did the last attempt succeed?
+gcloud scheduler jobs describe position-monitor-every-10-min --location=us-central1 --project=stock-hunter-trading
+```
+
+`gcloud functions describe` and `gcloud scheduler jobs describe` are read-only status checks; the two log
+commands are also read-only. None of these mutate anything, so they're safe to run anytime without asking
+Terraform/CI to do anything first.
+
 ## Troubleshooting
 
 ### SQLite is locked

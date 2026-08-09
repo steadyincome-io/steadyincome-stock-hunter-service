@@ -201,6 +201,9 @@ def _check_open_position(row):
     return None
 
 
+REACTION_LEGEND = "✅ = confirm you closed this trade. 🚫 = no action for now."
+
+
 def _format_close_message(row, reason):
     reason_text = {
         "profit_target": "profit target reached",
@@ -209,12 +212,29 @@ def _format_close_message(row, reason):
     }.get(reason, reason)
     return (
         f"**{row['ticker']}** ({row['strategy']}) -- {reason_text}.\n"
-        "React with ✅ if you've closed this position, or 🚫 to take no action for now."
+        f"{REACTION_LEGEND}"
     )
 
 
 @functions_framework.http
 def main(request):
+    # Smoke test: infra-deploy.yml calls this right after every successful
+    # `terraform apply` with ?smoke_test=1 so a broken webhook URL/bot
+    # token/channel ID surfaces immediately as a failed deploy step, not
+    # silently the first time a real trade actually needs an alert. Exercises
+    # the exact same _post_discord_message() path production alerts use, via
+    # the exact deployed service account -- not a separate direct-from-CI
+    # webhook call, which wouldn't prove the function's own secret wiring works.
+    if request.args.get("smoke_test"):
+        try:
+            _post_discord_message(
+                "✅ `position_monitor` deployed successfully -- this is a smoke test, no action needed."
+            )
+            return ("smoke test message sent", 200)
+        except Exception as exc:
+            print(f"[position_monitor] smoke test failed: {exc}")
+            return (f"smoke test failed: {exc}", 500)
+
     # Setup (Parts D/E of MANUAL_SETUP.md) may not be finished yet -- a
     # placeholder GOOGLE_SHEET_ID, or a real sheet not yet shared with this
     # function's service account, both raise an HttpError here. Treat that as

@@ -78,3 +78,14 @@ resource "google_cloud_run_service_iam_member" "position_monitor_invoker" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
 }
+
+# Lets infra-deploy.yml call this function's ?smoke_test=1 path right after
+# every apply, using the same OIDC-federated deployer identity it already
+# authenticates as -- no new secret/key needed for this.
+resource "google_cloud_run_service_iam_member" "position_monitor_invoker_deployer" {
+  project  = var.project_id
+  location = var.region
+  service  = google_cloudfunctions2_function.position_monitor.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:github-actions-deployer@${var.project_id}.iam.gserviceaccount.com"
+}

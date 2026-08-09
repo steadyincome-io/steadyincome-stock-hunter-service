@@ -49,3 +49,39 @@ jobs:
 
       - name: Terraform Apply
         run: terraform apply -input=false -auto-approve
+
+      - name: Get position_monitor URL
+        id: position_monitor_url
+        run: echo "url=$(terraform output -raw position_monitor_url)" >> "$GITHUB_OUTPUT"
+
+      - name: Mint an ID token scoped to that URL
+        id: smoke_test_auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "projects/444713174784/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions-deployer@stock-hunter-trading.iam.gserviceaccount.com"
+          token_format: "id_token"
+          id_token_audience: "${{ steps.position_monitor_url.outputs.url }}"
+          id_token_include_email: true
+
+      - name: Smoke-test the Discord webhook via the deployed function
+        # Confirms the webhook URL/bot token/channel ID secrets are actually
+        # wired up correctly right now, in CI -- rather than finding out only
+        # when a real trade needs its first alert. Calls the exact same
+        # _post_discord_message() code path production alerts use, via the
+        # deployer SA's own identity token (granted roles/run.invoker on this
+        # function in functions.tf) -- no extra secret needed.
+        # Placeholder secret values (a fresh deploy that hasn't done Part D of
+        # MANUAL_SETUP.md yet) legitimately fail this call with a Discord 401
+        # -- non-fatal to the overall deploy, so this doesn't hard-fail the job.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          HTTP_STATUS=$(curl -s -o /tmp/smoke_test_response.txt -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ steps.smoke_test_auth.outputs.id_token }}" \
+            "${{ steps.position_monitor_url.outputs.url }}?smoke_test=1")
+          echo "position_monitor smoke test HTTP ${HTTP_STATUS}: $(cat /tmp/smoke_test_response.txt)"
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::warning::position_monitor smoke test did not return 200 -- check Discord secrets (placeholder values? Part D of MANUAL_SETUP.md not done yet?)"
+            exit 1
+          fi

@@ -363,5 +363,5 @@ Notes on that example set:
 - [x] Part A — local gcloud CLI installed, authenticated, project created, billing linked
 - [x] Part B — Workload Identity Federation configured and verified
 - [x] Part C — Terraform state bucket bootstrapped
-- [ ] Part D — Discord webhook + bot created, secrets populated (currently placeholder values only)
+- [x] Part D — Discord webhook + bot created, secrets populated
 - [ ] Part E — Google Sheet created, shared, sheet ID secret populated (currently placeholder value only)
