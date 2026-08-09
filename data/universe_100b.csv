@@ -1,0 +1,185 @@
+ticker,name,asset_type,sector,industry,market_cap
+NVDA,NVIDIA Corporation - Common Stock,Stock,,,5424.5
+AAPL,Apple Inc. - Common Stock,Stock,,,4572.8
+MSFT,Microsoft Corporation - Common Stock,Stock,,,3712.7
+AMZN,"Amazon.com, Inc. - Common Stock",Stock,,,2960.6
+VTI,Vanguard Morningstar Total Stock Market ETF,ETF,ETF,,2290.0
+TSM,Taiwan Semiconductor Manufacturing Company Ltd.,Stock,,,2178.5
+AVGO,Broadcom Inc. - Common Stock,Stock,,,2035.1
+SPCX,Space Exploration Technologies Corp. - Class A Common Stock,Stock,,,1754.6
+VOO,Vanguard S&P 500 ETF,ETF,ETF,,1686.9
+META,"Meta Platforms, Inc. - Class A Common Stock",Stock,,,1508.4
+TSLA,"Tesla, Inc.  - Common Stock",Stock,,,1297.7
+BRK.B,Berkshire Hathaway Inc. New Common Stock,Stock,,,1125.4
+BRK.A,Berkshire Hathaway Inc. Common Stock,Stock,,,1121.7
+LLY,Eli Lilly and Company Common Stock,Stock,,,1057.3
+MU,"Micron Technology, Inc. - Common Stock",Stock,,,991.1
+SKHY,SK hynix Inc. - American Depositary Shares,Stock,,,979.0
+WMT,Walmart Inc. - Common Stock,Stock,,,890.1
+IVV,iShares Core S&P 500 ETF,ETF,ETF,,869.2
+SPY,State Street SPDR S&P 500 ETF Trust,ETF,ETF,,795.3
+AMD,"Advanced Micro Devices, Inc. - Common Stock",Stock,,,789.1
+V,Visa Inc.,Stock,,,676.8
+ASML,ASML Holding N.V. - New York Registry Shares,Stock,,,668.7
+VXUS,Vanguard Total International Stock ETF,ETF,ETF,,645.8
+XOM,ExxonMobil Holdings Corporation Common Stock,Stock,,,634.3
+JNJ,Johnson & Johnson Common Stock,Stock,,,624.7
+INTC,Intel Corporation - Common Stock,Stock,,,512.7
+MA,Mastercard Incorporated Common Stock,Stock,,,493.1
+CSCO,"Cisco Systems, Inc. - Common Stock",Stock,,,478.6
+QQQ,"Invesco QQQ Trust, Series 1",ETF,ETF,,452.8
+BAC,Bank of America Corporation Common Stock,Stock,,,441.7
+ABBV,AbbVie Inc. Common Stock,Stock,,,434.8
+AMAT,"Applied Materials, Inc. - Common Stock",Stock,,,428.1
+ORCL,Oracle Corporation Common Stock,Stock,,,423.5
+COST,Costco Wholesale Corporation - Common Stock,Stock,,,420.3
+PLTR,Palantir Technologies Inc. - Class A Common Stock,Stock,,,413.4
+BND,Vanguard Total Bond Market ETF,ETF,ETF,,396.7
+LRCX,Lam Research Corporation - Common Stock,Stock,,,389.6
+CAT,"Caterpillar, Inc. Common Stock",Stock,,,387.1
+QH,Quhuo Limited - Class A Ordinary Shares,Stock,,,386.0
+GE,GE Aerospace Common Stock,Stock,,,384.0
+KO,Coca-Cola Company (The) Common Stock,Stock,,,374.5
+VUG,Vanguard Morningstar Growth ETF,ETF,ETF,,372.0
+UNH,UnitedHealth Group Incorporated Common Stock (DE),Stock,,,369.7
+CVX,Chevron Corporation Common Stock,Stock,,,366.0
+HSBC,"HSBC Holdings, plc. Common Stock",Stock,,,355.7
+HD,"Home Depot, Inc. (The) Common Stock",Stock,,,354.6
+MS,Morgan Stanley Common Stock,Stock,,,340.1
+PG,Procter & Gamble Company (The) Common Stock,Stock,,,339.5
+MRK,"Merck & Company, Inc. Common Stock (new)",Stock,,,317.6
+VEA,Vanguard FTSE Developed Markets ETF,ETF,ETF,,314.9
+NFLX,"Netflix, Inc. - Common Stock",Stock,,,308.7
+BABA,Alibaba Group Holding Limited American Depositary Shares each representing eight Ordinary share,Stock,,,307.8
+GS,"Goldman Sachs Group, Inc. (The) Common Stock",Stock,,,302.7
+ARM,Arm Holdings plc - American Depositary Shares,Stock,,,301.8
+RTX,RTX Corporation Common Stock,Stock,,,300.6
+NVS,Novartis AG Common Stock,Stock,,,297.1
+PANW,"Palo Alto Networks, Inc. - Common Stock",Stock,,,296.5
+PM,Philip Morris International Inc Common Stock,Stock,,,295.5
+RY,Royal Bank Of Canada Common Stock,Stock,,,293.3
+DELL,Dell Technologies Inc. Class C Common Stock ,Stock,,,293.2
+GEV,GE Vernova Inc. Common Stock,Stock,,,263.8
+WFC,Wells Fargo & Company Common Stock,Stock,,,263.8
+KLAC,KLA Corporation  - Common Stock,Stock,,,258.8
+VTV,Vanguard Morningstar Value ETF,ETF,ETF,,256.4
+AZN,AstraZeneca PLC Ordinary Shares,Stock,,,250.3
+SHEL,Shell PLC American Depositary Shares (each representing two (2) Ordinary Shares) ,Stock,,,244.6
+ANET,"Arista Networks, Inc. Common Stock",Stock,,,238.0
+SAP,SAP  SE ADS,Stock,,,238.0
+AXP,American Express Company Common Stock,Stock,,,230.2
+BHP,BHP Group Limited American Depositary Shares (Each representing two Ordinary Shares),Stock,,,229.7
+C,"Citigroup, Inc. Common Stock",Stock,,,226.5
+LIN,Linde plc - Ordinary Shares,Stock,,,225.9
+TM,Toyota Motor Corporation Common Stock,Stock,,,225.1
+VO,Vanguard Morningstar Mid-Cap ETF,ETF,ETF,,224.7
+IBM,International Business Machines Corporation Common Stock,Stock,,,223.5
+AMGN,Amgen Inc. - Common Stock,Stock,,,221.8
+TMO,Thermo Fisher Scientific Inc Common Stock,Stock,,,219.6
+CRWD,"CrowdStrike Holdings, Inc. - Class A Common Stock",Stock,,,218.3
+SAN,"Banco Santander, S.A. Sponsored ADR (Spain)",Stock,,,209.7
+NVO,Novo Nordisk A/S Common Stock,Stock,,,208.9
+APH,Amphenol Corporation Common Stock,Stock,,,208.6
+TD,Toronto Dominion Bank (The) Common Stock,Stock,,,200.4
+MRVL,"Marvell Technology, Inc. - Common Stock",Stock,,,196.3
+VZ,Verizon Communications Inc. Common Stock,Stock,,,195.5
+SHOP,Shopify Inc. - Class A Subordinate Voting Shares,Stock,,,195.0
+MCD,McDonald's Corporation Common Stock,Stock,,,195.0
+TTE,TotalEnergies SE Ordinary Shares,Stock,,,190.4
+TMUS,"T-Mobile US, Inc. - Common Stock",Stock,,,190.1
+IEFA,iShares Core MSCI EAFE ETF,ETF,ETF,,190.1
+ADI,"Analog Devices, Inc. - Common Stock",Stock,,,189.9
+PEP,"PepsiCo, Inc. - Common Stock",Stock,,,189.7
+SCHW,Charles Schwab Corporation (The) Common Stock,Stock,,,187.1
+ABT,Abbott Laboratories Common Stock,Stock,,,186.6
+BA,Boeing Company (The) Common Stock,Stock,,,185.3
+STX,Seagate Technology Holdings PLC - Ordinary Shares (Ireland),Stock,,,184.5
+VB,Vanguard Morningstar Small-Cap ETF,ETF,ETF,,183.4
+SNDK,Sandisk Corporation - Common Stock When-Issued,Stock,,,179.5
+TJX,"TJX Companies, Inc. (The) Common Stock",Stock,,,178.3
+NEE,"NextEra Energy, Inc. Common Stock",Stock,,,176.5
+QCOM,QUALCOMM Incorporated - Common Stock,Stock,,,176.3
+UBS,UBS Group AG Registered Ordinary Shares,Stock,,,176.2
+BLK,"BlackRock, Inc. Common Stock",Stock,,,176.0
+ETN,"Eaton Corporation, PLC Ordinary Shares",Stock,,,174.2
+UNP,Union Pacific Corporation Common Stock,Stock,,,174.1
+WELL,Welltower Inc. Common Stock,Stock,,,170.7
+DE,Deere & Company Common Stock,Stock,,,167.7
+BKNG,Booking Holdings Inc. - Common Stock,Stock,,,166.1
+SCCO,Southern Copper Corporation Common Stock,Stock,,,166.1
+GILD,"Gilead Sciences, Inc. - Common Stock",Stock,,,165.2
+RIO,Rio Tinto Plc Common Stock,Stock,,,164.5
+SMFG,Sumitomo Mitsui Financial Group Inc Unsponsored American Depositary Shares (Japan),Stock,,,163.5
+T,AT&T Inc.,Stock,,,163.0
+VWO,Vanguard FTSE Emerging Markets ETF,ETF,ETF,,162.0
+VGT,Vanguard Information Tech ETF,ETF,ETF,,160.6
+CRM,"Salesforce, Inc. Common Stock",Stock,,,157.9
+BBVA,Banco Bilbao Vizcaya Argentaria S.A. Common Stock,Stock,,,156.4
+UBER,"Uber Technologies, Inc. Common Stock",Stock,,,153.2
+PFE,"Pfizer, Inc. Common Stock",Stock,,,152.5
+IEMG,iShares Core MSCI Emerging Markets ETF,ETF,ETF,,152.2
+WDC,Western Digital Corporation - Common Stock,Stock,,,149.7
+DHR,Danaher Corporation Common Stock,Stock,,,143.9
+COP,ConocoPhillips Common Stock,Stock,,,143.3
+GLW,Corning Incorporated Common Stock,Stock,,,142.4
+SONY,Sony Group Corporation American Depositary Shares ,Stock,,,137.8
+AGG,iShares Core U.S. Aggregate Bond ETF,ETF,ETF,,137.1
+ISRG,"Intuitive Surgical, Inc. - Common Stock",Stock,,,135.7
+LMT,Lockheed Martin Corporation Common Stock,Stock,,,135.7
+UL,Unilever PLC American Depositary Shares (each representing One Ordinary Share),Stock,,,135.6
+PH,Parker-Hannifin Corporation Common Stock,Stock,,,135.4
+CB,Chubb Limited  Common Stock,Stock,,,135.1
+PLD,"Prologis, Inc. Common Stock",Stock,,,133.2
+BMY,Bristol-Myers Squibb Company Common Stock,Stock,,,132.2
+VIG,Vanguard Div Appreciation ETF,ETF,ETF,,130.9
+PDD,PDD Holdings Inc. - American Depositary Shares,Stock,,,130.6
+MFG,"Mizuho Financial Group, Inc. Sponosred ADR (Japan)",Stock,,,130.5
+GLD,SPDR Gold Shares,ETF,ETF,,130.3
+SYK,Stryker Corporation Common Stock,Stock,,,130.0
+NOW,"ServiceNow, Inc. Common Stock",Stock,,,129.1
+BMO,Bank Of Montreal Common Stock,Stock,,,127.2
+VRTX,Vertex Pharmaceuticals Incorporated - Common Stock,Stock,,,125.7
+LOW,"Lowe's Companies, Inc. Common Stock",Stock,,,125.3
+PGR,Progressive Corporation (The) Common Stock,Stock,,,125.2
+BNDX,Vanguard Total International Bond ETF,ETF,ETF,,122.5
+CVS,CVS Health Corporation Common Stock,Stock,,,122.4
+IJH,iShares Core S&P Mid-Cap ETF,ETF,ETF,,122.4
+HDB,HDFC Bank Limited Common Stock,Stock,,,121.3
+IWF,iShares Russell 1000 Growth Fund,ETF,ETF,,121.2
+SBUX,Starbucks Corporation - Common Stock,Stock,,,120.4
+SPGI,S&P Global Inc. Common Stock,Stock,,,120.3
+NEM,Newmont Corporation,Stock,,,119.0
+FTNT,"Fortinet, Inc. - Common Stock",Stock,,,117.1
+APP,Applovin Corporation - Class A Common Stock,Stock,,,116.5
+PBR,Petroleo Brasileiro S.A. Petrobras ADS,Stock,,,115.7
+XLK,State Street Technology Select Sector SPDR ETF,ETF,ETF,,115.4
+SNOW,Snowflake Inc. Common Stock,Stock,,,114.5
+MO,"Altria Group, Inc.",Stock,,,114.1
+HWM,Howmet Aerospace Inc. Common Stock,Stock,,,112.4
+ENB,Enbridge Inc Common Stock,Stock,,,112.0
+MDT,Medtronic plc. Ordinary Shares,Stock,,,111.6
+PBR.A,Petroleo Brasileiro S.A. Petrobras American Depositary Shares representing Preferred Shares,Stock,,,110.0
+BX,Blackstone Inc. Common Stock,Stock,,,109.7
+IJR,iShares Core S&P Small-Cap ETF,ETF,ETF,,109.6
+IBN,ICICI Bank Limited Common Stock,Stock,,,108.4
+BNS,Bank Nova Scotia Halifax Pfd 3 Ordinary Shares,Stock,,,108.3
+CM,Canadian Imperial Bank of Commerce Common Stock,Stock,,,108.3
+ADP,"Automatic Data Processing, Inc. - Common Stock",Stock,,,107.8
+ACN,Accenture plc Class A Ordinary Shares (Ireland),Stock,,,107.5
+BP,BP p.l.c. Common Stock,Stock,,,107.2
+BNY,The Bank of New York Mellon Corporation Common Stock,Stock,,,106.9
+NET,"Cloudflare, Inc. Class A Common Stock",Stock,,,106.9
+ABNB,"Airbnb, Inc. - Class A Common Stock",Stock,,,106.6
+SO,Southern Company (The) Common Stock,Stock,,,106.6
+GD,General Dynamics Corporation Common Stock,Stock,,,106.1
+GSK,GSK plc American Depositary Shares (Each representing two Ordinary Shares),Stock,,,106.1
+TT,Trane Technologies plc,Stock,,,106.1
+SNY,Sanofi - American Depositary Shares,Stock,,,105.5
+ADBE,Adobe Inc. - Common Stock,Stock,,,105.4
+VRT,"Vertiv Holdings, LLC Class A Common Stock",Stock,,,104.9
+SCHD,Schwab US Dividend Equity ETF,ETF,ETF,,104.2
+EQIX,"Equinix, Inc. - Common Stock",Stock,,,102.9
+ING,"ING Group, N.V. Common Stock",Stock,,,102.0
+MCK,McKesson Corporation Common Stock,Stock,,,101.4
+PWR,"Quanta Services, Inc. Common Stock",Stock,,,101.0
+SPOT,Spotify Technology S.A. Ordinary Shares,Stock,,,100.4
