@@ -8,17 +8,24 @@
 #   echo -n "your-discord-user-id"                   | gcloud secrets versions add discord-user-id     --data-file=- --project=stock-hunter-trading
 #   echo -n "your-google-sheet-id"                   | gcloud secrets versions add google-sheet-id      --data-file=- --project=stock-hunter-trading
 #
-# The google_secret_manager_secret_version.placeholder resource below IS safe
-# to manage via Terraform, unlike the above -- "PLACEHOLDER_REPLACE_ME" isn't
-# sensitive, so it ending up in Terraform state costs nothing. Its only job is
-# to guarantee every secret has at least one version the instant it's created,
-# so a Cloud Function referencing it via secret_environment_variables
-# (version = "latest") never fails to deploy with "version ... was not found"
-# (the exact error this project hit twice already). Once you add a real value
-# with the commands above, this resource's own tracked version is left alone
-# -- Terraform doesn't re-read secret payload content on later applies (that
-# would mean silently calling the Secret Manager access API, with its own
-# audit-log/quota cost, on every plan), so it never reverts what you've set.
+# A prior version of this file also had Terraform auto-create a
+# "PLACEHOLDER_REPLACE_ME" google_secret_manager_secret_version for every
+# secret above, so the first-ever deploy wouldn't fail on
+# secret_environment_variables' `version = "latest"` finding nothing. That was
+# REMOVED after it caused a real production incident: once each secret's
+# Terraform-tracked placeholder version got destroyed out-of-band (e.g.
+# cleaning up old versions from the Secret Manager console after adding a
+# real value), the next `terraform apply` saw that tracked object gone and
+# silently recreated it -- and because Secret Manager's `version = "latest"`
+# always means "most recently created enabled version" regardless of who
+# created it, that fresh placeholder immediately became the new latest and
+# shadowed the real value, breaking position_monitor with zero warning. This
+# could recur on ANY future apply, not just the first one -- too dangerous to
+# keep automated. If you ever add a brand-new secret here, add its first
+# version manually with a one-off `gcloud secrets versions add` (placeholder
+# or real, doesn't matter) right after `terraform apply` creates the
+# container, the same way as the real values above -- never let Terraform
+# manage secret version content for anything Discord/Sheet-related.
 
 resource "google_secret_manager_secret" "discord_webhook_url" {
   secret_id = "discord-webhook-url"
@@ -79,23 +86,3 @@ resource "google_secret_manager_secret" "discord_user_id" {
   depends_on = [google_project_service.required]
 }
 
-locals {
-  # google_secret_manager_secret_version.secret needs the FULL resource path
-  # (projects/{project}/secrets/{secret_id}), not the bare secret_id -- using
-  # .secret_id here instead of .id produced a malformed API call
-  # (.../v1/discord-webhook-url:addVersion, missing the projects/.../secrets/
-  # prefix entirely) that 404'd on every secret.
-  bootstrap_secret_ids = [
-    google_secret_manager_secret.discord_webhook_url.id,
-    google_secret_manager_secret.discord_bot_token.id,
-    google_secret_manager_secret.discord_channel_id.id,
-    google_secret_manager_secret.discord_user_id.id,
-    google_secret_manager_secret.google_sheet_id.id,
-  ]
-}
-
-resource "google_secret_manager_secret_version" "placeholder" {
-  for_each    = toset(local.bootstrap_secret_ids)
-  secret      = each.value
-  secret_data = "PLACEHOLDER_REPLACE_ME"
-}
