@@ -364,4 +364,4 @@ Notes on that example set:
 - [x] Part B — Workload Identity Federation configured and verified
 - [x] Part C — Terraform state bucket bootstrapped
 - [x] Part D — Discord webhook + bot created, secrets populated
-- [ ] Part E — Google Sheet created, shared, sheet ID secret populated (currently placeholder value only)
+- [x] Part E — Google Sheet created, shared with position-monitor-sa as Editor, sheet ID secret populated

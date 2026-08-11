@@ -20,7 +20,7 @@ requires your own manual reaction. This function only decides *when to ask*
 and records what you've confirmed.
 """
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import requests
 import yfinance as yf
@@ -201,6 +201,64 @@ def _check_open_position(row):
     return None
 
 
+def _nth_weekday(year, month, weekday, n):
+    """weekday: Monday=0 ... Sunday=6. Returns the date of the n-th occurrence."""
+    d = date(year, month, 1)
+    offset = (weekday - d.weekday()) % 7
+    return d + timedelta(days=offset + 7 * (n - 1))
+
+
+def _last_weekday(year, month, weekday):
+    d = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
+    offset = (d.weekday() - weekday) % 7
+    return d - timedelta(days=offset)
+
+
+def _easter_sunday(year):
+    """Anonymous Gregorian algorithm (Meeus/Jones/Butcher) -- no external
+    dependency needed for one date-per-year."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month, day = divmod(h + l - 7 * m + 114, 31)
+    return date(year, month, day + 1)
+
+
+def _observed(d):
+    """NYSE shifts a fixed-date holiday off a weekend: Saturday -> preceding
+    Friday, Sunday -> following Monday."""
+    if d.weekday() == 5:
+        return d - timedelta(days=1)
+    if d.weekday() == 6:
+        return d + timedelta(days=1)
+    return d
+
+
+def _nyse_holidays(year):
+    """NYSE full-market-closure holidays for a given year. Not exhaustive of
+    every historical special closure (e.g. a one-off day of mourning), just
+    the fixed annual calendar -- good enough to skip the routine no-op case
+    of "scheduler fired on a known holiday", not a certified trading calendar."""
+    return {
+        _observed(date(year, 1, 1)),          # New Year's Day
+        _nth_weekday(year, 1, 0, 3),           # MLK Day -- 3rd Monday of Jan
+        _nth_weekday(year, 2, 0, 3),           # Washington's Birthday -- 3rd Monday of Feb
+        _easter_sunday(year) - timedelta(days=2),  # Good Friday
+        _last_weekday(year, 5, 0),             # Memorial Day -- last Monday of May
+        _observed(date(year, 6, 19)),          # Juneteenth
+        _observed(date(year, 7, 4)),           # Independence Day
+        _nth_weekday(year, 9, 0, 1),           # Labor Day -- 1st Monday of Sept
+        _nth_weekday(year, 11, 3, 4),          # Thanksgiving -- 4th Thursday of Nov
+        _observed(date(year, 12, 25)),         # Christmas
+    }
+
+
 REACTION_LEGEND = "✅ = confirm you closed this trade. 🚫 = no action for now."
 
 
@@ -235,18 +293,32 @@ def main(request):
             print(f"[position_monitor] smoke test failed: {exc}")
             return (f"smoke test failed: {exc}", 500)
 
+    # scheduler.tf's cron only knows weekdays, not NYSE holidays -- skip the
+    # real work (Sheets read + yfinance calls per open row) on a day the
+    # market's actually closed, rather than running it for nothing.
+    today = date.today()
+    if today in _nyse_holidays(today.year):
+        print(f"[position_monitor] {today.isoformat()} is a NYSE holiday -- skipping")
+        return ("market closed today, nothing to monitor", 200)
+
     # Setup (Parts D/E of MANUAL_SETUP.md) may not be finished yet -- a
     # placeholder GOOGLE_SHEET_ID, or a real sheet not yet shared with this
     # function's service account, both raise an HttpError here. Treat that as
     # "nothing to monitor yet" rather than a failed execution; once the real
     # sheet ID + sharing are in place, this same call just starts succeeding.
+    # A plain socket/read timeout can also land here (e.g. under memory
+    # pressure) even once setup is genuinely done -- don't mislabel that as a
+    # config problem, since it's misleading to debug against.
     try:
         service = _sheets_service()
         tab = _sheet_tab_name(service)
         rows = _read_all_rows(service, tab)
+    except TimeoutError as exc:
+        print(f"[position_monitor] Sheets API call timed out (transient, will retry next run): {exc}")
+        return ("Sheets API timed out, will retry next run", 200)
     except Exception as exc:
-        print(f"[position_monitor] Sheet not accessible yet (placeholder ID? not shared?): {exc}")
-        return ("Sheet not accessible yet, nothing to monitor", 200)
+        print(f"[position_monitor] Sheet not accessible (placeholder ID? not shared?): {exc}")
+        return ("Sheet not accessible, nothing to monitor", 200)
 
     actioned = 0
     for row in rows:

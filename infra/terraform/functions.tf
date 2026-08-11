@@ -31,8 +31,13 @@ resource "google_cloudfunctions2_function" "position_monitor" {
   }
 
   service_config {
-    max_instance_count    = 1
-    available_memory      = "512Mi"
+    max_instance_count = 1
+    # 512Mi was too tight -- yfinance pulls in pandas/numpy, and
+    # googleapiclient's discovery.build() adds cold-start overhead on top;
+    # a real run hit 546Mi and got OOM-killed by Cloud Run before finishing.
+    # 1Gi gives real headroom without materially changing cost (GB-seconds
+    # billed is memory x duration, and duration is unaffected by this bump).
+    available_memory      = "1Gi"
     timeout_seconds       = 300
     service_account_email = google_service_account.position_monitor.email
 
