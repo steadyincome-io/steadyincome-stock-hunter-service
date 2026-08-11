@@ -37,7 +37,12 @@ resource "google_cloudfunctions2_function" "position_monitor" {
     # a real run hit 546Mi and got OOM-killed by Cloud Run before finishing.
     # 1Gi gives real headroom without materially changing cost (GB-seconds
     # billed is memory x duration, and duration is unaffected by this bump).
-    available_memory      = "1Gi"
+    available_memory = "1Gi"
+    # Cloud Run only allows 0.333 vCPU for memory up to 512Mi -- 1Gi requires
+    # bumping CPU too, or the API rejects the combo outright (confirmed via a
+    # real failed apply: "For 0.333 CPU, memory must be between 128Mi and
+    # 512Mi inclusive").
+    available_cpu         = "1"
     timeout_seconds       = 300
     service_account_email = google_service_account.position_monitor.email
 
