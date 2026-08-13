@@ -6,7 +6,7 @@ from .logger import info, success, warning
 DB_NAME = "drawdown_analyzer.db"
 # Produced weekly by universe_scanner.py (see .github/workflows/universe-scan.yml),
 # not by pipeline.py itself -- see sync_universe_from_csv() below.
-UNIVERSE_CSV_PATH = "data/universe_100b.csv"
+UNIVERSE_CSV_PATH = "data/universe_50b.csv"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS universe (
@@ -164,238 +164,19 @@ CREATE TABLE IF NOT EXISTS etf_holdings (
 );
 """
 
-DEFAULT_UNIVERSE = [
-    # Technology / Semi
-    ('AAPL', 'Apple Inc.', 'Stock', 'Technology', 'Consumer Electronics', 3450.0),
-    ('MSFT', 'Microsoft Corporation', 'Stock', 'Technology', 'Software - Infrastructure', 3120.0),
-    ('NVDA', 'NVIDIA Corporation', 'Stock', 'Technology', 'Semiconductors', 3150.0),
-    ('AVGO', 'Broadcom Inc.', 'Stock', 'Technology', 'Semiconductors', 820.0),
-    ('ORCL', 'Oracle Corporation', 'Stock', 'Technology', 'Software - Infrastructure', 380.0),
-    ('CRM', 'Salesforce Inc.', 'Stock', 'Technology', 'Software - Application', 280.0),
-    ('AMD', 'Advanced Micro Devices Inc.', 'Stock', 'Technology', 'Semiconductors', 250.0),
-    ('CSCO', 'Cisco Systems Inc.', 'Stock', 'Technology', 'Communication Equipment', 210.0),
-    ('QCOM', 'QUALCOMM Incorporated', 'Stock', 'Technology', 'Semiconductors', 220.0),
-    ('IBM', 'International Business Machines', 'Stock', 'Technology', 'IT Services', 190.0),
-    ('TXN', 'Texas Instruments Incorporated', 'Stock', 'Technology', 'Semiconductors', 180.0),
-    ('AMAT', 'Applied Materials Inc.', 'Stock', 'Technology', 'Semiconductor Equipment', 180.0),
-    ('INTU', 'Intuit Inc.', 'Stock', 'Technology', 'Software - Application', 180.0),
-    ('NOW', 'ServiceNow Inc.', 'Stock', 'Technology', 'Software - Application', 170.0),
-    ('ACN', 'Accenture plc', 'Stock', 'Technology', 'IT Services', 220.0),
-    ('PANW', 'Palo Alto Networks Inc.', 'Stock', 'Technology', 'Software - Infrastructure', 110.0),
-    ('ADBE', 'Adobe Inc.', 'Stock', 'Technology', 'Software - Infrastructure', 240.0),
-    ('PLTR', 'Palantir Technologies Inc.', 'Stock', 'Technology', 'Software - Infrastructure', 105.0),
-    ('ARM', 'Arm Holdings plc', 'Stock', 'Technology', 'Semiconductors', 140.0),
-    ('ANET', 'Arista Networks Inc.', 'Stock', 'Technology', 'Computer Hardware', 110.0),
-    ('KLAC', 'KLA Corporation', 'Stock', 'Technology', 'Semiconductor Equipment', 110.0),
-    ('LRCX', 'Lam Research Corporation', 'Stock', 'Technology', 'Semiconductor Equipment', 115.0),
-    ('SMCI', 'Super Micro Computer Inc.', 'Stock', 'Technology', 'Computer Hardware', 100.0),
-    ('SNPS', 'Synopsys Inc.', 'Stock', 'Technology', 'Software - Infrastructure', 102.0),
-    ('CDNS', 'Cadence Design Systems Inc.', 'Stock', 'Technology', 'Software - Infrastructure', 105.0),
-    ('FISV', 'Fiserv Inc.', 'Stock', 'Technology', 'Information Technology Services', 108.0),
-    ('FIS', 'Fidelity National Information', 'Stock', 'Technology', 'Information Technology Services', 100.0),
-    ('SHOP', 'Shopify Inc.', 'Stock', 'Technology', 'Software - Application', 110.0),
-    ('MU', 'Micron Technology Inc.', 'Stock', 'Technology', 'Semiconductors', 120.0),
-    ('INTC', 'Intel Corporation', 'Stock', 'Technology', 'Semiconductors', 100.0),
-    ('ASML', 'ASML Holding N.V.', 'Stock', 'Technology', 'Semiconductor Equipment', 350.0),
-    ('TSM', 'Taiwan Semiconductor Manufacturing', 'Stock', 'Technology', 'Semiconductors', 850.0),
-    ('SAP', 'SAP SE', 'Stock', 'Technology', 'Software - Application', 240.0),
-    ('SONY', 'Sony Group Corporation', 'Stock', 'Technology', 'Consumer Electronics', 110.0),
-    ('ADI', 'Analog Devices Inc.', 'Stock', 'Technology', 'Semiconductors', 115.0),
-    ('APH', 'Amphenol Corporation', 'Stock', 'Technology', 'Electronic Components', 105.0),
-
-    # Communication Services
-    ('GOOGL', 'Alphabet Inc. Class A', 'Stock', 'Communication Services', 'Internet Content & Information', 2250.0),
-    ('GOOG', 'Alphabet Inc. Class C', 'Stock', 'Communication Services', 'Internet Content & Information', 2240.0),
-    ('META', 'Meta Platforms Inc.', 'Stock', 'Communication Services', 'Internet Content & Information', 1350.0),
-    ('NFLX', 'Netflix Inc.', 'Stock', 'Communication Services', 'Entertainment', 290.0),
-    ('TMUS', 'T-Mobile US Inc.', 'Stock', 'Communication Services', 'Telecom Services', 210.0),
-    ('T', 'AT&T Inc.', 'Stock', 'Communication Services', 'Telecom Services', 130.0),
-    ('VZ', 'Verizon Communications Inc.', 'Stock', 'Communication Services', 'Telecom Services', 170.0),
-    ('CMCSA', 'Comcast Corporation', 'Stock', 'Communication Services', 'Entertainment', 160.0),
-    ('DIS', 'The Walt Disney Company', 'Stock', 'Communication Services', 'Entertainment', 190.0),
-    ('CHTR', 'Charter Communications Inc.', 'Stock', 'Communication Services', 'Entertainment', 100.0),
-    ('SPOT', 'Spotify Technology S.A.', 'Stock', 'Communication Services', 'Entertainment', 100.0),
-
-    # Consumer Discretionary
-    ('AMZN', 'Amazon.com Inc.', 'Stock', 'Consumer Cyclical', 'Internet Retail', 1980.0),
-    ('TSLA', 'Tesla Inc.', 'Stock', 'Consumer Cyclical', 'Auto Manufacturers', 780.0),
-    ('HD', 'The Home Depot Inc.', 'Stock', 'Consumer Cyclical', 'Home Improvement Retail', 360.0),
-    ('NKE', 'NIKE Inc.', 'Stock', 'Consumer Cyclical', 'Footwear & Accessories', 120.0),
-    ('MCD', 'McDonald\'s Corporation', 'Stock', 'Consumer Cyclical', 'Restaurants', 210.0),
-    ('SBUX', 'Starbucks Corporation', 'Stock', 'Consumer Cyclical', 'Restaurants', 105.0),
-    ('LOW', 'Lowe\'s Companies Inc.', 'Stock', 'Consumer Cyclical', 'Home Improvement Retail', 130.0),
-    ('TJX', 'The TJX Companies Inc.', 'Stock', 'Consumer Cyclical', 'Apparel Retail', 125.0),
-    ('BKNG', 'Booking Holdings Inc.', 'Stock', 'Consumer Cyclical', 'Travel Services', 140.0),
-    ('ABNB', 'Airbnb Inc.', 'Stock', 'Consumer Cyclical', 'Travel Services', 100.0),
-    ('MAR', 'Marriott International Inc.', 'Stock', 'Consumer Cyclical', 'Lodging', 100.0),
-    ('ORLY', 'O\'Reilly Automotive Inc.', 'Stock', 'Consumer Cyclical', 'Specialty Retail', 102.0),
-    ('AZO', 'AutoZone Inc.', 'Stock', 'Consumer Cyclical', 'Specialty Retail', 100.0),
-    ('CMG', 'Chipotle Mexican Grill Inc.', 'Stock', 'Consumer Cyclical', 'Restaurants', 110.0),
-    ('BABA', 'Alibaba Group Holding Ltd.', 'Stock', 'Consumer Cyclical', 'Internet Retail', 190.0),
-    ('PDD', 'PDD Holdings Inc.', 'Stock', 'Consumer Cyclical', 'Internet Retail', 160.0),
-    ('MELI', 'MercadoLibre Inc.', 'Stock', 'Consumer Cyclical', 'Internet Retail', 100.0),
-
-    # Consumer Staples
-    ('WMT', 'Walmart Inc.', 'Stock', 'Consumer Defensive', 'Discount Stores', 540.0),
-    ('PG', 'Procter & Gamble Co.', 'Stock', 'Consumer Defensive', 'Household & Personal Products', 390.0),
-    ('KO', 'The Coca-Cola Company', 'Stock', 'Consumer Defensive', 'Beverages - Non-Alcoholic', 280.0),
-    ('PEP', 'PepsiCo Inc.', 'Stock', 'Consumer Defensive', 'Beverages - Non-Alcoholic', 230.0),
-    ('COST', 'Costco Wholesale Corp.', 'Stock', 'Consumer Defensive', 'Discount Stores', 380.0),
-    ('PM', 'Philip Morris International', 'Stock', 'Consumer Defensive', 'Tobacco', 180.0),
-    ('MDLZ', 'Mondelez International Inc.', 'Stock', 'Consumer Defensive', 'Confectionery', 100.0),
-    ('CL', 'Colgate-Palmolive Company', 'Stock', 'Consumer Defensive', 'Household & Personal Products', 100.0),
-    ('MO', 'Altria Group Inc.', 'Stock', 'Consumer Defensive', 'Tobacco', 100.0),
-    ('DEO', 'Diageo plc', 'Stock', 'Consumer Defensive', 'Beverages - Wineries & Distilleries', 110.0),
-    ('KMB', 'Kimberly-Clark Corporation', 'Stock', 'Consumer Defensive', 'Household & Personal Products', 100.0),
-    ('STZ', 'Constellation Brands Inc.', 'Stock', 'Consumer Defensive', 'Beverages - Wineries & Distilleries', 100.0),
-
-    # Healthcare / Pharma
-    ('LLY', 'Eli Lilly and Company', 'Stock', 'Healthcare', 'Drug Manufacturers - General', 810.0),
-    ('NVO', 'Novo Nordisk A/S', 'Stock', 'Healthcare', 'Biotechnology', 580.0),
-    ('JNJ', 'Johnson & Johnson', 'Stock', 'Healthcare', 'Drug Manufacturers - General', 380.0),
-    ('UNH', 'UnitedHealth Group Inc.', 'Stock', 'Healthcare', 'Healthcare Plans', 510.0),
-    ('ABBV', 'AbbVie Inc.', 'Stock', 'Healthcare', 'Drug Manufacturers - General', 320.0),
-    ('MRK', 'Merck & Co. Inc.', 'Stock', 'Healthcare', 'Drug Manufacturers - General', 300.0),
-    ('TMO', 'Thermo Fisher Scientific Inc.', 'Stock', 'Healthcare', 'Diagnostics & Research', 220.0),
-    ('ABT', 'Abbott Laboratories', 'Stock', 'Healthcare', 'Medical Devices', 190.0),
-    ('AMGN', 'Amgen Inc.', 'Stock', 'Healthcare', 'Drug Manufacturers - General', 160.0),
-    ('DHR', 'Danaher Corporation', 'Stock', 'Healthcare', 'Diagnostics & Research', 180.0),
-    ('PFE', 'Pfizer Inc.', 'Stock', 'Healthcare', 'Drug Manufacturers - General', 160.0),
-    ('ISRG', 'Intuitive Surgical Inc.', 'Stock', 'Healthcare', 'Medical Instruments', 170.0),
-    ('CVS', 'CVS Health Corporation', 'Stock', 'Healthcare', 'Healthcare Plans', 100.0),
-    ('SYK', 'Stryker Corporation', 'Stock', 'Healthcare', 'Medical Devices', 130.0),
-    ('REGN', 'Regeneron Pharmaceuticals', 'Stock', 'Healthcare', 'Biotechnology', 110.0),
-    ('VRTX', 'Vertex Pharmaceuticals', 'Stock', 'Healthcare', 'Biotechnology', 120.0),
-    ('BMY', 'Bristol-Myers Squibb', 'Stock', 'Healthcare', 'Drug Manufacturers - General', 110.0),
-    ('MDT', 'Medtronic plc', 'Stock', 'Healthcare', 'Medical Devices', 110.0),
-    ('ELV', 'Elevance Health Inc.', 'Stock', 'Healthcare', 'Healthcare Plans', 120.0),
-    ('GILD', 'Gilead Sciences Inc.', 'Stock', 'Healthcare', 'Drug Manufacturers - General', 105.0),
-    ('CI', 'The Cigna Group', 'Stock', 'Healthcare', 'Healthcare Plans', 105.0),
-    ('ZTS', 'Zoetis Inc.', 'Stock', 'Healthcare', 'Drug Manufacturers - Specialty', 100.0),
-    ('MCK', 'McKesson Corporation', 'Stock', 'Healthcare', 'Medical Distribution', 100.0),
-    ('COR', 'Cencora Inc.', 'Stock', 'Healthcare', 'Medical Distribution', 100.0),
-
-    # Financials / Banking / Insurance
-    ('BRK.B', 'Berkshire Hathaway Inc.', 'Stock', 'Financial', 'Financial Data & Stock Exchanges', 980.0),
-    ('JPM', 'JPMorgan Chase & Co.', 'Stock', 'Financial', 'Banks - Diversified', 590.0),
-    ('V', 'Visa Inc.', 'Stock', 'Financial', 'Credit Services', 560.0),
-    ('MA', 'Mastercard Incorporated', 'Stock', 'Financial', 'Credit Services', 430.0),
-    ('BAC', 'Bank of America Corp.', 'Stock', 'Financial', 'Banks - Diversified', 310.0),
-    ('WFC', 'Wells Fargo & Company', 'Stock', 'Financial', 'Banks - Diversified', 210.0),
-    ('MS', 'Morgan Stanley', 'Stock', 'Financial', 'Capital Markets', 160.0),
-    ('GS', 'The Goldman Sachs Group', 'Stock', 'Financial', 'Capital Markets', 160.0),
-    ('C', 'Citigroup Inc.', 'Stock', 'Financial', 'Banks - Diversified', 120.0),
-    ('BLK', 'BlackRock Inc.', 'Stock', 'Financial', 'Asset Management', 130.0),
-    ('SCHW', 'The Charles Schwab Corp.', 'Stock', 'Financial', 'Capital Markets', 120.0),
-    ('AXP', 'American Express Company', 'Stock', 'Financial', 'Credit Services', 180.0),
-    ('SPGI', 'S&P Global Inc.', 'Stock', 'Financial', 'Financial Data & Stock Exchanges', 150.0),
-    ('CME', 'CME Group Inc.', 'Stock', 'Financial', 'Financial Data & Stock Exchanges', 100.0),
-    ('AON', 'Aon plc', 'Stock', 'Financial', 'Insurance Brokers', 100.0),
-    ('MRSH', 'Marsh & McLennan Companies', 'Stock', 'Financial', 'Insurance Brokers', 105.0),
-    ('PGR', 'The Progressive Corp.', 'Stock', 'Financial', 'Insurance - Property & Casualty', 130.0),
-    ('CB', 'Chubb Limited', 'Stock', 'Financial', 'Insurance - Property & Casualty', 110.0),
-    ('TRV', 'The Travelers Companies', 'Stock', 'Financial', 'Insurance - Property & Casualty', 100.0),
-    ('USB', 'U.S. Bancorp', 'Stock', 'Financial', 'Banks - Regional', 100.0),
-    ('MET', 'MetLife Inc.', 'Stock', 'Financial', 'Insurance - Life', 100.0),
-    ('PNC', 'PNC Financial Services Group', 'Stock', 'Financial', 'Banks - Regional', 100.0),
-    ('AIG', 'American International Group', 'Stock', 'Financial', 'Insurance - Diversified', 100.0),
-    ('ALL', 'The Allstate Corporation', 'Stock', 'Financial', 'Insurance - Property & Casualty', 100.0),
-    ('COF', 'Capital One Financial Corp.', 'Stock', 'Financial', 'Credit Services', 100.0),
-
-    # Industrials & Aerospace
-    ('GE', 'GE Aerospace', 'Stock', 'Industrials', 'Aerospace & Defense', 190.0),
-    ('CAT', 'Caterpillar Inc.', 'Stock', 'Industrials', 'Farm & Heavy Construction Machinery', 170.0),
-    ('DE', 'Deere & Company', 'Stock', 'Industrials', 'Farm & Heavy Construction Machinery', 110.0),
-    ('LMT', 'Lockheed Martin Corp.', 'Stock', 'Industrials', 'Aerospace & Defense', 110.0),
-    ('RTX', 'RTX Corporation', 'Stock', 'Industrials', 'Aerospace & Defense', 150.0),
-    ('HON', 'Honeywell International', 'Stock', 'Industrials', 'Conglomerates', 130.0),
-    ('UNP', 'Union Pacific Corporation', 'Stock', 'Industrials', 'Railroads', 150.0),
-    ('UPS', 'United Parcel Service Inc.', 'Stock', 'Industrials', 'Integrated Freight & Logistics', 110.0),
-    ('BA', 'The Boeing Company', 'Stock', 'Industrials', 'Aerospace & Defense', 120.0),
-    ('ETN', 'Eaton Corporation plc', 'Stock', 'Industrials', 'Specialty Industrial Machinery', 130.0),
-    ('ITW', 'Illinois Tool Works Inc.', 'Stock', 'Industrials', 'Specialty Industrial Machinery', 100.0),
-    ('PH', 'Parker-Hannifin Corp.', 'Stock', 'Industrials', 'Specialty Industrial Machinery', 100.0),
-    ('GD', 'General Dynamics Corp.', 'Stock', 'Industrials', 'Aerospace & Defense', 100.0),
-    ('NOC', 'Northrop Grumman Corp.', 'Stock', 'Industrials', 'Aerospace & Defense', 100.0),
-    ('WM', 'Waste Management Inc.', 'Stock', 'Industrials', 'Waste Management', 100.0),
-    ('FDX', 'FedEx Corporation', 'Stock', 'Industrials', 'Integrated Freight & Logistics', 100.0),
-    ('RSG', 'Republic Services Inc.', 'Stock', 'Industrials', 'Waste Management', 100.0),
-    ('SPCX', 'Space Exploration Technologies Corp.', 'Stock', 'Industrials', 'Aerospace & Defense', 1651.0),
-
-    # Energy & Materials
-    ('XOM', 'Exxon Mobil Corporation', 'Stock', 'Energy', 'Oil & Gas Integrated', 470.0),
-    ('CVX', 'Chevron Corporation', 'Stock', 'Energy', 'Oil & Gas Integrated', 280.0),
-    ('COP', 'ConocoPhillips', 'Stock', 'Energy', 'Oil & Gas E&P', 130.0),
-    ('SLB', 'Schlumberger Limited', 'Stock', 'Energy', 'Oil & Gas Equipment & Services', 100.0),
-    ('EOG', 'EOG Resources Inc.', 'Stock', 'Energy', 'Oil & Gas E&P', 100.0),
-    ('MPC', 'Marathon Petroleum Corp.', 'Stock', 'Energy', 'Oil & Gas Refining & Marketing', 100.0),
-    ('PSX', 'Phillips 66', 'Stock', 'Energy', 'Oil & Gas Refining & Marketing', 100.0),
-    ('VLO', 'Valero Energy Corp.', 'Stock', 'Energy', 'Oil & Gas Refining & Marketing', 100.0),
-    ('WMB', 'The Williams Companies Inc.', 'Stock', 'Energy', 'Oil & Gas Midstream', 100.0),
-    ('BKR', 'Baker Hughes Company', 'Stock', 'Energy', 'Oil & Gas Equipment & Services', 100.0),
-    ('OXY', 'Occidental Petroleum Corp.', 'Stock', 'Energy', 'Oil & Gas E&P', 100.0),
-    ('LIN', 'Linde plc', 'Stock', 'Basic Materials', 'Specialty Chemicals', 210.0),
-    ('FCX', 'Freeport-McMoRan Inc.', 'Stock', 'Basic Materials', 'Copper', 100.0),
-    ('NEM', 'Newmont Corporation', 'Stock', 'Basic Materials', 'Gold', 100.0),
-    ('APD', 'Air Products and Chemicals', 'Stock', 'Basic Materials', 'Specialty Chemicals', 100.0),
-
-    # Utilities & Real Estate
-    ('NEE', 'NextEra Energy Inc.', 'Stock', 'Utilities', 'Utilities - Renewable', 150.0),
-    ('SO', 'The Southern Company', 'Stock', 'Utilities', 'Utilities - Regulated Electric', 100.0),
-    ('DUK', 'Duke Energy Corporation', 'Stock', 'Utilities', 'Utilities - Regulated Electric', 100.0),
-    ('CEG', 'Constellation Energy Corp.', 'Stock', 'Utilities', 'Utilities - Renewable', 100.0),
-    ('AMT', 'American Tower Corp.', 'Stock', 'Real Estate', 'REIT - Specialty', 110.0),
-    ('PLD', 'Prologis Inc.', 'Stock', 'Real Estate', 'REIT - Industrial', 110.0),
-    ('EQIX', 'Equinix Inc.', 'Stock', 'Real Estate', 'REIT - Specialty', 100.0),
-
-    # Mega ETFs (> $100B AUM)
-    ('SPY', 'SPDR S&P 500 ETF Trust', 'ETF', 'Broad Market', 'US Large Cap Blend', 560.0),
-    ('IVV', 'iShares Core S&P 500 ETF', 'ETF', 'Broad Market', 'US Large Cap Blend', 490.0),
-    ('VOO', 'Vanguard S&P 500 ETF', 'ETF', 'Broad Market', 'US Large Cap Blend', 510.0),
-    ('VTI', 'Vanguard Total Stock Market ETF', 'ETF', 'Total Market', 'US Total Stock Market', 380.0),
-    ('QQQ', 'Invesco QQQ Trust', 'ETF', 'Tech Heavy', 'US Large Cap Growth', 280.0),
-    ('VUG', 'Vanguard Growth ETF', 'ETF', 'Large Cap Growth', 'US Large Cap Growth', 130.0),
-    ('VTV', 'Vanguard Value ETF', 'ETF', 'Large Cap Value', 'US Large Cap Value', 120.0),
-    ('SCHD', 'Schwab U.S. Dividend Equity ETF', 'ETF', 'Dividend', 'US High Dividend Yield', 104.0),
-    ('BND', 'Vanguard Total Bond Market ETF', 'ETF', 'Fixed Income', 'US Broad Bond', 110.0),
-    ('AGG', 'iShares Core U.S. Aggregate Bond ETF', 'ETF', 'Fixed Income', 'US Broad Bond', 105.0),
-    ('VXUS', 'Vanguard Total International Stock ETF', 'ETF', 'International', 'Global Ex-US Equity', 400.0),
-    ('VEA', 'Vanguard FTSE Developed Markets ETF', 'ETF', 'International', 'Developed Markets Ex-US', 130.0),
-    ('VWO', 'Vanguard FTSE Emerging Markets ETF', 'ETF', 'International', 'Emerging Markets Equity', 110.0),
-    ('IWM', 'iShares Russell 2000 ETF', 'ETF', 'Small Cap', 'US Small Cap Blend', 100.0),
-    ('XLK', 'Technology Select Sector SPDR', 'ETF', 'Sector', 'US Technology Sector', 110.0),
-    ('XLE', 'Energy Select Sector SPDR', 'ETF', 'Sector', 'US Energy Sector', 100.0),
-    ('XLF', 'Financial Select Sector SPDR', 'ETF', 'Sector', 'US Financial Sector', 100.0),
-    ('XLV', 'Health Care Select Sector SPDR', 'ETF', 'Sector', 'US Health Care Sector', 100.0),
-    ('XLY', 'Consumer Discretionary Select Sector SPDR', 'ETF', 'Sector', 'US Consumer Discretionary', 100.0),
-    ('XLP', 'Consumer Staples Select Sector SPDR', 'ETF', 'Sector', 'US Consumer Staples', 100.0),
-    ('DIA', 'SPDR Dow Jones Industrial Average ETF', 'ETF', 'Broad Market', 'US Large Cap Value', 100.0)
-]
-
 def init_db(db_path=DB_NAME):
     info(f"Initializing SQLite database schema at: {db_path}")
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.executescript(SCHEMA_SQL)
-    
+
     # Add new columns to daily_snapshot if they don't exist
     try:
         cursor.execute("ALTER TABLE daily_snapshot ADD COLUMN investment_score INTEGER")
     except sqlite3.OperationalError:
         pass  # Column already exists
 
-    # Populate default universe if empty
-    cursor.execute("SELECT COUNT(*) FROM universe")
-    count = cursor.fetchone()[0]
-    if count == 0:
-        info("Seeding default >$100B stock and mega ETF universe")
-        cursor.executemany("""
-            INSERT INTO universe (ticker, name, asset_type, sector, industry, market_cap, status, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'))
-        """, DEFAULT_UNIVERSE)
-        conn.commit()
-        success(f"Inserted {len(DEFAULT_UNIVERSE)} universe tickers")
-        
+    conn.commit()
     conn.close()
     success("Database schema ready")
 
@@ -452,6 +233,14 @@ def migrate_db(db_path=DB_NAME):
         # opportunistically on every pipeline run since it costs no extra API call
         # (comes from the same stock.info dict already fetched for PE/dividend yield).
         ("short_percent_of_float",     "REAL"),
+        # Growth-adjusted DCF fair value per share -- a 3-point sensitivity range
+        # (low/base/high), not a single confident target -- see dcf_valuation.py
+        # module docstring and README "DCF fair value" section for the full
+        # methodology and why a range instead of one number.
+        ("dcf_fair_value_low",         "REAL"),
+        ("dcf_fair_value_base",        "REAL"),
+        ("dcf_fair_value_high",        "REAL"),
+        ("dcf_margin_of_safety_pct",   "REAL"),
     ]
     for col_name, col_type in daily_snapshot_columns:
         try:
@@ -592,28 +381,45 @@ def migrate_db(db_path=DB_NAME):
 
 
 def sync_universe_from_csv(db_path=DB_NAME, csv_path=UNIVERSE_CSV_PATH):
-    """Reconciles the `universe` table against a weekly $100B-crossing scan
+    """Reconciles the `universe` table against a weekly $50B-crossing scan
     (see universe_scanner.py): every ticker in the CSV is upserted as active,
     and every ticker that's currently active but NOT in the CSV gets marked
     inactive -- not deleted, so its price_history/sec_financials/etc. stay
     intact, it just stops being actively screened. This is what makes
-    "crossing" membership two-way: a ticker that later drops below $100B
+    "crossing" membership two-way: a ticker that later drops below $50B
     naturally falls off the active universe on the next pipeline run.
 
-    No-ops entirely if the CSV doesn't exist yet (e.g. before the first
-    weekly scan has ever run) or is empty, so pipeline.py keeps working off
-    whatever's already seeded (DEFAULT_UNIVERSE on a fresh DB) rather than
-    breaking. Returns the number of tickers synced as active (0 if no-op).
+    This CSV (checked into git, see .github/workflows/universe-scan.yml) is
+    the sole source of the active universe -- there is no hardcoded fallback
+    seed list. No-ops (keeps the existing universe as-is) if the CSV is
+    missing or empty, but escalates to a WARNING rather than a quiet INFO
+    when that leaves the `universe` table itself empty, since that's a
+    genuinely broken setup (nothing for the rest of the pipeline to screen),
+    not routine "no changes this week" behavior. Returns the number of
+    tickers synced as active (0 if no-op).
     """
+    def _warn_if_universe_empty(reason):
+        conn = sqlite3.connect(db_path)
+        count = conn.execute("SELECT COUNT(*) FROM universe").fetchone()[0]
+        conn.close()
+        if count == 0:
+            warning(
+                f"{reason}, and the universe table is EMPTY -- the pipeline has nothing to screen this run. "
+                f"Check that {csv_path} exists and is committed (it's the sole source of the active universe, "
+                "no hardcoded fallback seed exists)."
+            )
+        else:
+            info(f"{reason} -- keeping existing universe as-is ({count} tickers)")
+
     if not os.path.exists(csv_path):
-        info(f"No universe scan CSV found at {csv_path} -- keeping existing universe as-is")
+        _warn_if_universe_empty(f"No universe scan CSV found at {csv_path}")
         return 0
 
     with open(csv_path, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
     if not rows:
-        warning(f"{csv_path} is empty -- keeping existing universe as-is")
+        _warn_if_universe_empty(f"{csv_path} is empty")
         return 0
 
     conn = sqlite3.connect(db_path)

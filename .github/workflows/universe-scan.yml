@@ -1,4 +1,4 @@
-name: Weekly $100B universe scan
+name: Weekly $50B universe scan
 
 on:
   schedule:
@@ -61,10 +61,10 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/universe_100b.csv
+          git add data/universe_50b.csv
           if git diff --cached --quiet; then
-            echo "No changes to universe_100b.csv -- nothing to commit"
+            echo "No changes to universe_50b.csv -- nothing to commit"
           else
-            git commit -m "Update \$100B universe scan"
+            git commit -m "Update \$50B universe scan"
             git push
           fi

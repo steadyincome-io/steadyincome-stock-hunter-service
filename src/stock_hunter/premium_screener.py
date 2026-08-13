@@ -25,7 +25,7 @@ Usage:
 import argparse
 import math
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -72,6 +72,21 @@ EXPECTED_MOVE_WIDTH_FRACTION = 0.35
 # same "how many strikes away" mechanism this project used before dynamic
 # width existed.
 SPREAD_WIDTH_STRIKES = 2
+# put_credit_spread only: hard ceiling on per-contract max loss (dollars, i.e.
+# real trading dollars -- one contract = 100 shares -- not the per-share
+# figures the rest of this module works in internally). None (default) = no
+# cap, width is whatever the expected-move formula above says. When set, this
+# overrides that formula: the spread gets narrowed one strike at a time,
+# regardless of what --expected-move-width-fraction targeted, until max loss
+# fits under the cap or the narrowest possible (1-strike) spread is reached.
+# This exists because wider != proportionally more premium -- the long leg
+# gets cheaper as it moves further OTM, so extra width adds much less credit
+# than it adds to max loss (return_on_risk_pct actually gets worse, not
+# better, the wider you go). A ratio-based nudge (return_potential in
+# EDGE_SCORE_WEIGHTS) discourages this but doesn't cap it outright -- this
+# does, as an explicit position-sizing guardrail ("never let one trade lose
+# more than $X") rather than a ranking preference.
+MAX_LOSS_DOLLARS_CAP = None
 
 # ---- single-leg strike walk-in (cash_secured_put / covered_call) ----------
 # --short-otm-pct is only a STARTING point for single-leg strategies: broad,
@@ -103,6 +118,38 @@ MARKET_INDEX_TICKER = "SPY"
 MARKET_SMA_PERIOD = 200  # standard "bull vs. bear market" threshold
 VIX_TICKER = "^VIX"
 VIX_PAUSE_THRESHOLD = 30  # elevated/crisis-level volatility
+
+# FOMC rate-decision gate: same "gate the whole run" idea as the market
+# regime/VIX checks above, but applied to EVERY strategy including
+# covered_call (require_uptrend=False), not just bullish/neutral ones -- a
+# rate-decision gap risk threatens a short premium position on either side
+# of the market (short put OR short call), unlike the SMA/VIX checks which
+# are specifically about protecting bullish/neutral entries from a bear
+# market. Deliberately does NOT try to model hike-vs-cut sentiment/direction
+# -- that needs a live data feed (CME FedWatch, fed funds futures) to do
+# reliably, and even then "hike -> stocks down" is often wrong in practice
+# (moves are usually priced in ahead of the meeting; the surprise relative to
+# consensus matters far more than the raw direction). This only flags
+# elevated event-risk/volatility during the option's life, the same
+# treatment has_earnings_within() already gives an earnings print -- just
+# applied market-wide instead of per-ticker.
+# Decision-day dates (the second day of each 2-day meeting, when the rate
+# decision is announced) per the Fed's published calendar as of this
+# writing -- update this list when the Fed publishes a new year's calendar
+# (typically the prior autumn), and periodically re-verify: an occasional
+# meeting date does get rescheduled.
+FOMC_MEETING_DATES = {
+    date(2025, 1, 29), date(2025, 3, 19), date(2025, 5, 7), date(2025, 6, 18),
+    date(2025, 7, 30), date(2025, 9, 17), date(2025, 10, 29), date(2025, 12, 10),
+    date(2026, 1, 28), date(2026, 3, 18), date(2026, 4, 29), date(2026, 6, 17),
+    date(2026, 7, 29), date(2026, 9, 16), date(2026, 10, 28), date(2026, 12, 9),
+    date(2027, 1, 27), date(2027, 3, 17), date(2027, 4, 28), date(2027, 6, 9),
+    date(2027, 7, 28), date(2027, 9, 15), date(2027, 10, 27), date(2027, 12, 8),
+}
+# Matches _find_weekly_expiration's 4-10-day target window -- a meeting
+# further out than the widest weekly expiration this screener would pick
+# isn't actually inside any option's life yet.
+FOMC_LOOKAHEAD_DAYS = 10
 
 # ---- day-of-week entry backtest (informational, opt-in) -------------------
 # yfinance only provides intraday bars for the trailing ~60 days, so a 5-year
@@ -250,6 +297,7 @@ def load_all_active_candidates(conn):
             ds.drawdown_opportunity_score, ds.insider_sentiment_score,
             ds.current_drawdown_pct, ds.dividend_yield_pct, ds.low_52w, ds.high_52w,
             ds.short_percent_of_float,
+            ds.dcf_fair_value_low, ds.dcf_fair_value_base, ds.dcf_fair_value_high, ds.dcf_margin_of_safety_pct,
             dsum.avg_drawdown_pct, dsum.worst_drawdown_pct,
             conc.concentration_risk_score, conc.concentration_risk_summary, conc.concentration_risk_type
         FROM universe u
@@ -338,6 +386,24 @@ def check_vix_level(threshold=VIX_PAUSE_THRESHOLD, vix_ticker=VIX_TICKER):
         return True, {"vix": None, "threshold": threshold, "note": "VIX fetch failed; failing open (treating as calm)"}
     is_calm = vix_level < threshold
     return is_calm, {"vix": vix_level, "threshold": threshold}
+
+
+def check_fomc_proximity(lookahead_days=FOMC_LOOKAHEAD_DAYS):
+    """Gate the whole run for EVERY strategy (unlike check_market_regime/
+    check_vix_level, which only gate require_uptrend strategies): is an FOMC
+    rate decision happening within the option's life? See FOMC_MEETING_DATES
+    above for why this deliberately doesn't try to model hike-vs-cut
+    direction, just proximity as an event-risk flag.
+
+    Returns (is_clear, detail_dict). No fail-open case here (unlike the live
+    yfinance-backed checks above) -- FOMC_MEETING_DATES is a static, locally-
+    known list, not a fetch that can fail.
+    """
+    today = date.today()
+    upcoming = sorted(d for d in FOMC_MEETING_DATES if today <= d <= today + timedelta(days=lookahead_days))
+    if not upcoming:
+        return True, {"next_meeting": None}
+    return False, {"next_meeting": upcoming[0], "days_away": (upcoming[0] - today).days}
 
 
 def rank_and_filter_pool(conn, all_rows, avoid_list, strategy_key, pool_size, sma_period=SMA_TREND_FILTER_PERIOD):
@@ -545,7 +611,8 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                                   short_otm_pct=SHORT_LEG_OTM_PCT, spread_width_strikes=SPREAD_WIDTH_STRIKES,
                                   risk_free_rate=RISK_FREE_RATE, min_open_interest=MIN_OPEN_INTEREST,
                                   min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE,
-                                  expected_move_width_fraction=EXPECTED_MOVE_WIDTH_FRACTION):
+                                  expected_move_width_fraction=EXPECTED_MOVE_WIDTH_FRACTION,
+                                  max_loss_dollars=MAX_LOSS_DOLLARS_CAP):
     """Pick the nearest expiration (target ~4-10 days out for a 'weekly').
 
     For single-leg strategies (cash_secured_put, covered_call), targets a
@@ -592,6 +659,8 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
             short_idx = table.index[table["strike"] == short_row["strike"]][0]
             short_strike = float(short_row["strike"])
             iv_pct = float(short_row["impliedVolatility"]) * 100 if pd.notna(short_row["impliedVolatility"]) else None
+            short_bid = float(short_row["bid"]) if pd.notna(short_row["bid"]) else 0.0
+            short_ask = float(short_row["ask"]) if pd.notna(short_row["ask"]) else 0.0
 
             if iv_pct is not None and iv_pct > 0:
                 expected_move_dollars = short_strike * (iv_pct / 100) * math.sqrt(target_days / 365)
@@ -616,6 +685,36 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                     reason = f"Not enough strikes below the short leg to build a {spread_width_strikes}-strike-wide spread (IV unavailable)"
                 warning(f"{ticker}: {reason}")
                 return None, reason
+
+            # --max-loss-dollars is a hard ceiling, not a suggestion -- overrides
+            # the width-target formula above by narrowing one strike at a time
+            # (long_idx moves toward short_idx) until per-contract max loss fits
+            # under the cap, or the narrowest possible (1-strike) spread is
+            # reached. Deliberately checked with the same bid/ask economics used
+            # for the final candidate below, not the mid-price, so the cap holds
+            # under a realistic fill too.
+            trimmed_for_max_loss_cap = False
+            if max_loss_dollars is not None:
+                floor_idx = short_idx - 1
+                while True:
+                    candidate_row = table.iloc[long_idx]
+                    candidate_ask = float(candidate_row["ask"]) if pd.notna(candidate_row["ask"]) else 0.0
+                    candidate_credit = short_bid - candidate_ask
+                    candidate_width = short_strike - float(candidate_row["strike"])
+                    candidate_max_loss = candidate_width - candidate_credit
+                    if candidate_max_loss * 100 <= max_loss_dollars:
+                        break
+                    if long_idx >= floor_idx:
+                        reason = (
+                            f"Even the narrowest 1-strike-wide spread has a max loss of "
+                            f"${candidate_max_loss * 100:.2f}/contract, over the --max-loss-dollars cap of "
+                            f"${max_loss_dollars:.2f}"
+                        )
+                        warning(f"{ticker}: {reason}")
+                        return None, reason
+                    long_idx += 1
+                    trimmed_for_max_loss_cap = True
+
             long_row = table.iloc[long_idx]
 
             short_oi = int(short_row["openInterest"]) if pd.notna(short_row["openInterest"]) else 0
@@ -628,8 +727,6 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                 warning(f"{ticker}: {reason}")
                 return None, reason
 
-            short_bid = float(short_row["bid"]) if pd.notna(short_row["bid"]) else 0.0
-            short_ask = float(short_row["ask"]) if pd.notna(short_row["ask"]) else 0.0
             long_bid = float(long_row["bid"]) if pd.notna(long_row["bid"]) else 0.0
             long_ask = float(long_row["ask"]) if pd.notna(long_row["ask"]) else 0.0
             long_strike = float(long_row["strike"])
@@ -681,6 +778,7 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                 "width_basis": width_basis,
                 "expected_move_dollars": round(expected_move_dollars, 2) if expected_move_dollars is not None else None,
                 "width_target_dollars": round(width_target_dollars, 2) if width_target_dollars is not None else None,
+                "trimmed_for_max_loss_cap": trimmed_for_max_loss_cap,
             }, None
 
         # Single-leg strategies (cash_secured_put, covered_call): short_otm_pct
@@ -1028,7 +1126,8 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
                   market_index=MARKET_INDEX_TICKER, market_sma_period=MARKET_SMA_PERIOD,
                   vix_threshold=VIX_PAUSE_THRESHOLD, min_open_interest=MIN_OPEN_INTEREST,
                   show_day_of_week_backtest=True, min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE,
-                  expected_move_width_fraction=EXPECTED_MOVE_WIDTH_FRACTION):
+                  expected_move_width_fraction=EXPECTED_MOVE_WIDTH_FRACTION,
+                  max_loss_dollars=MAX_LOSS_DOLLARS_CAP, fomc_lookahead_days=FOMC_LOOKAHEAD_DAYS):
     if strategy_key not in STRATEGIES:
         raise ValueError(f"Unknown strategy '{strategy_key}'. Choose from: {list(STRATEGIES)}")
 
@@ -1036,8 +1135,27 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
     conn = _connect(db_path)
     strategy = STRATEGIES[strategy_key]
 
+    # Unconditional -- unlike the market regime/VIX gate below, this applies
+    # to every strategy including covered_call (require_uptrend=False), since
+    # rate-decision volatility isn't a directional risk the way a bear market
+    # is (see check_fomc_proximity).
+    step("Step 0: checking for an FOMC rate decision within the option's life")
+    fomc_clear, fomc_detail = check_fomc_proximity(lookahead_days=fomc_lookahead_days)
+    if not fomc_clear:
+        warning(
+            f"FOMC meeting on {fomc_detail['next_meeting']} is {fomc_detail['days_away']} day(s) away, inside "
+            f"the weekly option window -- no new trades this run (any strategy). Event-risk gate, not a "
+            "directional hike/cut bet -- see FOMC_MEETING_DATES for why."
+        )
+        conn.close()
+        return {
+            "strategy": strategy_key, "avoid_list": {}, "candidates": [], "rejected": [],
+            "blocked_reason": f"FOMC meeting on {fomc_detail['next_meeting']} within the weekly option window",
+        }
+    success(f"No FOMC meeting within the next {fomc_lookahead_days} days")
+
     if strategy["require_uptrend"]:
-        step(f"Step 0: checking market regime ({market_index} trend) and VIX before screening individual names")
+        step(f"Step 0b: checking market regime ({market_index} trend) and VIX before screening individual names")
         market_healthy, market_detail = check_market_regime(conn, index_ticker=market_index, sma_period=market_sma_period)
         vix_calm, vix_detail = check_vix_level(threshold=vix_threshold)
 
@@ -1129,6 +1247,7 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
             risk_free_rate=risk_free_rate, min_open_interest=min_open_interest,
             min_premium_pct_of_strike=min_premium_pct_of_strike,
             expected_move_width_fraction=expected_move_width_fraction,
+            max_loss_dollars=max_loss_dollars,
         )
         if option_snapshot is None:
             rejections[ticker] = reason or "No usable weekly option data"
@@ -1245,17 +1364,48 @@ def _print_short_squeeze_detail(candidates, strategy_key):
         print(f"  {r['ticker']}: {_format_short_interest(r)}% of float short")
 
 
+def _print_dcf_detail(candidates):
+    """Growth-adjusted DCF fair-value sensitivity range (see dcf_valuation.py
+    and README "DCF fair value" for the full methodology). Shown as a
+    separate detail section, not main-table columns -- a 3-point range
+    doesn't fit a fixed-width column cleanly, and it's currently sparse
+    (needs at least a 1-year revenue comparison, ideally 3+ years, from
+    ingested SEC 10-K history to compute a growth rate) so most rows won't
+    have one yet. Purely informational -- not factored into Edge Score."""
+    valued = [r for r in candidates if r.get("dcf_fair_value_base") is not None]
+    if not valued:
+        return
+    print()
+    print("DCF fair value (growth-adjusted, low/base/high sensitivity range from a WACC/terminal-growth grid --")
+    print("see README for the full methodology; NOT a single confident price target, informational only):")
+    for r in valued:
+        mos = r.get("dcf_margin_of_safety_pct")
+        mos_str = f"{mos:+.1f}%" if mos is not None else "N/A"
+        print(
+            f"  {r['ticker']}: ${r['dcf_fair_value_low']:.2f} / ${r['dcf_fair_value_base']:.2f} / "
+            f"${r['dcf_fair_value_high']:.2f} (low/base/high) vs current ${r['price']:.2f} "
+            f"(margin of safety {mos_str})"
+        )
+
+
 def _print_spread_width_detail(candidates):
     """put_credit_spread only: notes which candidates fell back to the fixed
     --spread-width-strikes count because the short leg's IV was unavailable,
-    instead of the normal IV-based dynamic width."""
+    instead of the normal IV-based dynamic width -- and separately, which
+    candidates got narrowed below their width target by --max-loss-dollars."""
     fallback = [r for r in candidates if r.get("width_basis") == "fixed"]
-    if not fallback:
-        return
-    print()
-    print("Width basis (IV unavailable for these -- used the fixed --spread-width-strikes fallback instead of the dynamic IV-based width):")
-    for r in fallback:
-        print(f"  {r['ticker']}")
+    if fallback:
+        print()
+        print("Width basis (IV unavailable for these -- used the fixed --spread-width-strikes fallback instead of the dynamic IV-based width):")
+        for r in fallback:
+            print(f"  {r['ticker']}")
+
+    capped = [r for r in candidates if r.get("trimmed_for_max_loss_cap")]
+    if capped:
+        print()
+        print("Narrowed below the width target by --max-loss-dollars (max loss would've otherwise exceeded the cap):")
+        for r in capped:
+            print(f"  {r['ticker']}: {r['spread_width']:.2f}-wide, max loss ${r['max_loss'] * 100:.2f}/contract")
 
 
 def _print_strike_walk_detail(candidates):
@@ -1350,6 +1500,7 @@ def _print_single_leg_report(candidates, strategy_key):
     _print_concentration_detail(candidates)
     _print_short_squeeze_detail(candidates, strategy_key)
     _print_strike_walk_detail(candidates)
+    _print_dcf_detail(candidates)
     _print_day_of_week_backtest(candidates)
 
 
@@ -1406,6 +1557,7 @@ def _print_spread_report(candidates):
         print("* price is the stored daily_snapshot value, not a live quote (yfinance fetch failed for this ticker).")
     _print_concentration_detail(candidates)
     _print_spread_width_detail(candidates)
+    _print_dcf_detail(candidates)
     _print_day_of_week_backtest(candidates)
 
 
@@ -1471,6 +1623,12 @@ if __name__ == "__main__":
     parser.add_argument("--spread-width-strikes", type=int, default=SPREAD_WIDTH_STRIKES,
                          help="put_credit_spread only: fallback fixed strike-count width, used only when the "
                               "short leg's IV is unavailable (rare)")
+    parser.add_argument("--max-loss-dollars", type=float, default=MAX_LOSS_DOLLARS_CAP,
+                         help="put_credit_spread only: hard ceiling on per-contract max loss in real dollars "
+                              "(one contract = 100 shares). Default: unset, no cap. When set, overrides "
+                              "--expected-move-width-fraction by narrowing the spread one strike at a time until "
+                              "max loss fits under this cap, or rejects the candidate if even the narrowest "
+                              "1-strike-wide spread still exceeds it")
     parser.add_argument("--sma-period", type=int, default=SMA_TREND_FILTER_PERIOD,
                          help="Trend filter: require price above this N-day SMA for bullish/neutral strategies")
     parser.add_argument("--risk-free-rate", type=float, default=RISK_FREE_RATE,
@@ -1481,6 +1639,10 @@ if __name__ == "__main__":
                          help="Market-regime gate: block new bullish/neutral trades if --market-index is below this N-day SMA")
     parser.add_argument("--vix-threshold", type=float, default=VIX_PAUSE_THRESHOLD,
                          help="Block new bullish/neutral trades if VIX is at/above this level")
+    parser.add_argument("--fomc-lookahead-days", type=int, default=FOMC_LOOKAHEAD_DAYS,
+                         help="Block new trades this run (every strategy, not just bullish/neutral) if an FOMC "
+                              "rate decision falls within this many days -- event-risk gate, not a directional "
+                              "hike/cut bet (default 10, matching the weekly option window)")
     parser.add_argument("--min-open-interest", type=int, default=MIN_OPEN_INTEREST,
                          help="Minimum open interest required on every leg (liquidity floor)")
     parser.add_argument("--min-premium-pct-of-strike", type=float, default=MIN_PREMIUM_PCT_OF_STRIKE,
@@ -1506,11 +1668,13 @@ if __name__ == "__main__":
         short_otm_pct=args.short_otm_pct,
         spread_width_strikes=args.spread_width_strikes,
         expected_move_width_fraction=args.expected_move_width_fraction,
+        max_loss_dollars=args.max_loss_dollars,
         sma_period=args.sma_period,
         risk_free_rate=args.risk_free_rate,
         market_index=args.market_index,
         market_sma_period=args.market_sma_period,
         vix_threshold=args.vix_threshold,
+        fomc_lookahead_days=args.fomc_lookahead_days,
         min_open_interest=args.min_open_interest,
         show_day_of_week_backtest=args.show_day_of_week_backtest,
         min_premium_pct_of_strike=args.min_premium_pct_of_strike,

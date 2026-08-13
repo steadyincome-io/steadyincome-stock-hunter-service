@@ -176,6 +176,69 @@ def _pick_fact_value(facts, tag_list, as_of_date=None, units=None):
     return best_row[1] if best_row else None
 
 
+# Same candidate tags as revenue_usd in _extract_numeric_fundamentals_from_companyfacts.
+_ANNUAL_REVENUE_TAGS = [
+    "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "SalesRevenueNet", "RevenueFromContractWithCustomerExcludingTax",
+]
+
+
+def get_annual_revenue_history(ticker: str, cik_str: str, max_years: int = 5) -> list:
+    """Up to `max_years` years of ANNUAL (full-fiscal-year) revenue figures,
+    most-recent-first, read directly from the cached SEC companyfacts
+    payload -- independent of how many individual 10-K rows actually exist
+    in `sec_financials` (that table only ever holds whatever
+    fetch_10k_10q_filings's days_back window covered on ingestion, e.g. just
+    the latest 10-K if that's all a given pipeline run fetched). companyfacts
+    itself already contains the FULL historical XBRL time series SEC has
+    ever recorded for a concept, across every filing that reported it --
+    including prior-year comparatives disclosed alongside a later filing --
+    so this needs no additional filings to be fetched/stored to get multi-
+    year history. Used by dcf_valuation's multi-year CAGR growth estimate.
+
+    XBRL doesn't tag "this one's the annual total" directly -- duration
+    length (period start to end) is the standard way to distinguish a
+    full-fiscal-year figure from a quarterly one within the same tag's
+    history, so entries are kept only when that span is 340-386 days.
+    """
+    facts = get_companyfacts_cached(ticker, cik_str)
+    if not facts or "facts" not in facts:
+        return []
+    usgaap = facts["facts"].get("us-gaap", {})
+    if not usgaap:
+        return []
+
+    by_end = {}
+    for tag in _ANNUAL_REVENUE_TAGS:
+        tag_payload = usgaap.get(tag)
+        if not tag_payload:
+            continue
+        for unit_entries in tag_payload.get("units", {}).values():
+            for entry in unit_entries:
+                if entry.get("form") not in ("10-K", "10-K/A"):
+                    continue
+                start, end, val = entry.get("start"), entry.get("end"), entry.get("val")
+                if not start or not end or val is None:
+                    continue
+                try:
+                    start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
+                except Exception:
+                    continue
+                if not (340 <= (end_dt - start_dt).days <= 386):
+                    continue  # quarterly or partial-year figure, not annual
+                value = _decode_fact_value(val)
+                if value is not None:
+                    by_end[end_dt] = value  # later entries for the same FY-end overwrite, same value anyway
+        # Prefer whichever tag actually has usable annual data, same "don't
+        # blend inconsistent tag histories" spirit as _pick_fact_value --
+        # companies periodically rename revenue concepts over time.
+        if by_end:
+            break
+
+    ordered = sorted(by_end.items(), key=lambda kv: kv[0], reverse=True)
+    return [value for _, value in ordered[:max_years]]
+
+
 def _extract_numeric_fundamentals_from_companyfacts(ticker: str, cik_str: str, filing_date: str, companyfacts=None) -> dict:
     facts = companyfacts if companyfacts is not None else get_companyfacts_cached(ticker, cik_str)
     if not facts:

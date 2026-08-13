@@ -293,6 +293,69 @@ All formulas above are transparent by design (doc section 27, "Reproducibility")
 be recomputed by hand from the columns already stored in `sec_financials`, `daily_snapshot`,
 `drawdown_summary`, and `distress_scores`.
 
+#### DCF fair value (`dcf_valuation.py: compute_dcf_fair_value`)
+
+A growth-adjusted discounted cash flow fair-value estimate, built to answer the same question equity
+research reports do ("what's this actually worth?") without reproducing the specific failure mode
+Wall Street analysts are prone to: quietly lowering the discount rate or baking in optimistic,
+uninterrupted growth to justify whatever target they already wanted. Two design choices exist
+specifically to guard against that:
+
+1. **Outputs a low/base/high sensitivity range, never a single number.** `low` = higher WACC + lower
+   terminal growth (most conservative), `high` = the opposite, `base` = the documented central
+   assumptions with no nudging in either direction. A fixed, small sensitivity grid
+   (`WACC_SENSITIVITY_DELTA` = 1%, `GROWTH_SENSITIVITY_DELTA` = 0.5%) makes the model's own
+   assumption-sensitivity visible instead of hidden inside one confident-looking figure.
+2. **Every input is either real SEC-sourced data or an explicitly documented macro constant** — no
+   per-company multiple gets silently "argued up." Built from:
+   - **Free cash flow** = `annual_operating_cash_flow_usd - annual_capex_usd`, the clean full-fiscal-year
+     figures `_load_latest_financials_map()` already prefers over a 10-Q's partial-year numbers (see
+     "SEC pull strategy" above).
+   - **Growth rate** = a multi-year revenue CAGR (`compute_base_growth_rate`), sourced via
+     `sec_financials_worker.get_annual_revenue_history()` directly from the cached SEC `companyfacts`
+     payload, **not** by counting rows in `sec_financials`. This matters: `sec_financials` only ever
+     holds whatever `fetch_10k_10q_filings`'s `days_back` window covered on ingestion — a pipeline
+     configured to always pull just the latest 10-K would only ever have 1 filing row per ticker, which
+     would make a row-count-based multi-year lookup permanently stuck at 1 year no matter how many times
+     the pipeline runs. `companyfacts` instead already contains the full historical XBRL time series SEC
+     has ever recorded for a concept, across every filing that's reported it (including prior-year
+     comparatives disclosed alongside a later filing), so multi-year revenue is available immediately,
+     independent of `days_back` or filing-row retention. Falls back to the pipeline's simple 1-year
+     `revenue_growth_pct` (needs 2 stored 10-K rows) only if `companyfacts` doesn't have a usable annual
+     figure for that ticker.
+   - **WACC** = CAPM cost of equity (`risk_free_rate + beta × equity_risk_premium`, beta from live
+     `yfinance` — the one input with no SEC substitute) blended with an assumed after-tax cost of debt,
+     weighted by *market* value of equity and `total_debt_usd`. `sec_financials` has no interest-expense
+     field to derive a genuine per-company cost of debt from, so `PRETAX_COST_OF_DEBT` (5.5%) and
+     `ASSUMED_TAX_RATE` (21%, the US statutory rate) are documented judgment calls, not derived figures.
+   - **2-stage projection**: growth fades linearly from the computed rate toward `TERMINAL_GROWTH_RATE`
+     (2.5%, the conservative retail-investor convention, used as the base case *on purpose*) over
+     `PROJECTION_YEARS` (5), then a standard Gordon Growth terminal value.
+   - **Equity value** = enterprise value − `total_debt_usd` + `cash_usd`, ÷ `shares_outstanding` for
+     fair value per share.
+
+Returns `None` (no fabricated estimate) rather than a number built on missing data, whenever FCF isn't
+positive, no growth rate is available, or WACC can't be computed (missing beta/market cap) — same
+fail-open-with-a-reason philosophy as `compute_distress`.
+
+Stored in `daily_snapshot` as `dcf_fair_value_low`/`_base`/`_high` and `dcf_margin_of_safety_pct`
+(`(fair_value_base - price) / price × 100`), and surfaced in the premium screener's report as a
+separate detail section (not main-table columns — a 3-point range doesn't fit a fixed-width column)
+for whichever candidates have a computed value.
+
+**Expect large negative margins of safety on popular mega-cap names, and don't read that as broken.**
+Tested live against AAPL/MSFT/KO: base-case fair value came out 60-75% below current market price for
+all three. That's the expected, correct behavior of a *sober, non-inflated* DCF (2.5% terminal growth,
+no multiple justification, a plain textbook WACC) applied to names trading at rich multiples for reasons
+a 5-year cash-flow model doesn't capture — brand moat, buyback-driven share-count reduction, growth
+optionality beyond the explicit projection window, market enthusiasm. This is a well-documented, real
+phenomenon (plain DCFs routinely show popular growth/quality names as "overvalued" by wide margins) —
+and notably, it's part of why real analysts are tempted to nudge WACC down or extend growth periods to
+close that gap, which is the exact behavior this feature exists to avoid imitating. Read a large negative
+margin of safety as "the current price is riding on more than a basic FCF projection can justify," one
+data point among many already on the report, not a standalone sell signal.
+**Purely informational — not factored into Edge Score or any filtering decision.**
+
 ### 2. Run as a One-Shot Execution or Background Service Daemon
 
 Run one-shot sync:
@@ -482,11 +545,12 @@ If the primary provider returns HTTP 429 and `NARRATIVE_FALLBACK_PROVIDER` is se
 - `--reset-financials` will now rebuild the last 365 days of `10-K` and `10-Q` filings instead of a 5-year filing history.
 - If the SEC filing rows already exist and the pipeline failed during the LLM pass, use `--resume-llm` to continue from Step 1b without refetching filings or reprocessing complete LLM rows.
 
-### Weekly $100B universe scan
+### Weekly $50B universe scan
 
-The `universe` table's default seed (`DEFAULT_UNIVERSE` in `schema.py`) is a hand-curated, static list -- it
-doesn't update itself as companies grow past or shrink below $100B. `.github/workflows/universe-scan.yml`
-runs weekly (Sunday, plus `workflow_dispatch` for a manual run) and keeps this genuinely current instead:
+`.github/workflows/universe-scan.yml` runs weekly (Sunday, plus `workflow_dispatch` for a manual run) and
+is the **sole source of the active universe** -- there is no hardcoded fallback seed list, since
+`data/universe_50b.csv` is a real, git-tracked artifact a fresh clone already has before the pipeline
+ever runs, so nothing needs to be pre-seeded:
 
 1. **Phase 1 (~60 min, deliberately conservative pace)** -- downloads the free, keyless NASDAQ Trader
    listed-company files (`nasdaqlisted.txt` + `otherlisted.txt`, ~13,000 symbols across NYSE/NASDAQ/etc.,
@@ -497,19 +561,22 @@ runs weekly (Sunday, plus `workflow_dispatch` for a manual run) and keeps this g
    to be dead on arrival -- that endpoint now requires session/crumb auth and returned a flat `401` when
    tested live, so this is genuinely one request per symbol, paced deliberately slowly (a small sleep
    between calls) specifically to avoid Yahoo throttling/blocking a scan this size, not for speed.
-2. **Phase 2 (cheap)** -- for just the small survivor list from Phase 1 (currently a few hundred names),
-   one more pass fetches name/sector/industry, producing the same `(ticker, name, asset_type, sector,
-   industry, market_cap)` shape `DEFAULT_UNIVERSE` already uses.
-3. Writes `data/universe_100b.csv` and commits it back to the repo.
+2. **Phase 2 (cheap)** -- for just the small survivor list from Phase 1, one more pass fetches
+   name/sector/industry, producing `(ticker, name, asset_type, sector, industry, market_cap)`. Also
+   **excludes non-US-headquartered stocks here** (via `info['country']`) -- ADRs like BHP, ASML, TSM, SAP,
+   SONY, NVO, BABA clear the market-cap bar easily but are foreign private issuers under SEC rules, filing
+   20-F/6-K instead of 10-K/10-Q, which this pipeline's SEC-fundamentals workers don't parse. Keeping them
+   would mean screening names this pipeline structurally can't get good fundamentals data for. ETFs are
+   never excluded by this check (a US-domiciled fund's holdings being international doesn't change that
+   the fund itself files normally).
+3. Writes `data/universe_50b.csv` and commits it back to the repo.
 
 `pipeline.py` calls `schema.sync_universe_from_csv()` on every run (right after `init_db()`/`migrate_db()`)
 to reconcile the `universe` table against whatever this CSV currently says: every ticker in the CSV is
 upserted as `active`, and any ticker that's currently `active` but *not* in the CSV gets marked `inactive`
 (not deleted -- its `price_history`/`sec_financials`/etc. stay intact, it just stops being actively
-screened). This makes membership genuinely two-way: a ticker that drops below $100B falls out of the
-active universe on the next pipeline run after that happens, rather than lingering forever. If the CSV
-doesn't exist yet (e.g. before the first weekly scan has ever run), this step no-ops entirely and
-`pipeline.py` just keeps working off `DEFAULT_UNIVERSE`'s seed.
+screened). This makes membership genuinely two-way: a ticker that drops below $50B falls out of the
+active universe on the next pipeline run after that happens, rather than lingering forever.
 
 ### 4. Query 10-K and 10-Q Financials from the SQLite Database
 
@@ -593,10 +660,13 @@ PYTHONPATH=src python -m stock_hunter.premium_screener --strategy put_credit_spr
 
 What it does, in order (this is the actual execution order -- the code's own step numbering matches):
 
-0. **Macro/regime gate** (`cash_secured_put` / `put_credit_spread` only -- see "Macro/regime gates"
-   below for the full detail) -- before touching any individual ticker, checks whether the broad market
-   itself and VIX are healthy enough to sell bullish/neutral premium into. If either check fails, the
-   run stops immediately with `result["blocked_reason"]` set and nothing else below happens this cycle.
+0. **Macro/regime gates** (see "Macro/regime gates" below for the full detail) -- before touching any
+   individual ticker, two whole-run checks: an **FOMC proximity check** (every strategy, including
+   `covered_call`) refuses new trades if a Fed rate decision falls within the option's life, and a
+   **market regime + VIX check** (`cash_secured_put` / `put_credit_spread` only) refuses new trades if
+   the broad market itself and VIX aren't healthy enough to sell bullish/neutral premium into. If any
+   check fails, the run stops immediately with `result["blocked_reason"]` set and nothing else below
+   happens this cycle.
 1. **Avoid list** -- hard-excludes any ticker with `distress_scores.risk_level = 'Material solvency
    concerns'`, a bankruptcy-related 8-K in the trailing 180 days, or `daily_snapshot.risk_score >= 65`.
    Insider selling is intentionally **not** a hard exclude: this universe is mega-cap-only, where
@@ -670,21 +740,37 @@ or too correlated with an already-picked name. `print_report` renders this as a 
 pass `--no-show-rejected` to suppress it for a shorter run. Candidates + rejected always sum to the
 full active-stock universe -- no ticker silently disappears without a logged reason.
 
-**Macro/regime gates:** `cash_secured_put` and `put_credit_spread` (bullish/neutral -- you're implicitly
-betting the market holds up) are gated by two whole-run checks before any individual ticker is screened,
-since no amount of stock-picking protects a single-name short-premium position from a genuine systemic
-shock:
-- **Market regime** -- refuses new trades if `--market-index` (default SPY) is below its trailing
-  `--market-sma-period` (default 200) day SMA, the standard "don't sell premium into a confirmed bear
-  market" rule.
-- **VIX pause** -- refuses new trades if VIX is at/above `--vix-threshold` (default 30), a systemic-stress
-  signal.
+**Macro/regime gates:** two independent whole-run checks before any individual ticker is screened, since
+no amount of stock-picking protects a single-name short-premium position from a genuine systemic shock or
+a scheduled market-wide volatility event:
 
-Both fail open (treat conditions as healthy) if the underlying data can't be fetched, logged as such
-rather than silently assumed. `covered_call` is exempt from both, consistent with it not requiring an
-uptrend. When either gate trips, the run stops before any per-ticker work and reports why via
-`result["blocked_reason"]` -- this is a whole-run gate, not a per-ticker rejection, so no individual
-stock's quality can override it.
+- **FOMC proximity** (`--fomc-lookahead-days`, default 10, matching the weekly option window) -- refuses
+  new trades **for every strategy, including `covered_call`** -- if a Fed rate decision falls within the
+  option's life. Unlike the market regime/VIX checks below, this isn't about bullish-vs-bearish exposure:
+  a rate-decision gap risk threatens a short premium position on either side of the market (short put
+  *or* short call), so it isn't exempted for `covered_call` the way the trend-based checks are.
+  Deliberately does **not** try to model hike-vs-cut direction/sentiment ("hike -> stocks down") -- that
+  needs a live data feed (CME FedWatch, fed funds futures) to do reliably, and even then the intuition is
+  often wrong in practice, since rate moves are usually priced in well before the meeting and it's the
+  *surprise* relative to consensus that actually moves markets, not the raw direction. This only flags
+  elevated event-risk during the option's life, the same treatment the earnings-exclusion check above
+  already gives an earnings print -- just applied market-wide instead of per-ticker. Meeting dates
+  (`FOMC_MEETING_DATES` in `premium_screener.py`) are a static, hand-maintained list off the Fed's
+  published calendar (currently populated through end of 2027) -- update it when the Fed publishes a new
+  year's calendar (typically the prior autumn), and periodically re-verify, since an occasional meeting
+  date does get rescheduled.
+- **Market regime** (`cash_secured_put` / `put_credit_spread` only, bullish/neutral strategies) --
+  refuses new trades if `--market-index` (default SPY) is below its trailing `--market-sma-period`
+  (default 200) day SMA, the standard "don't sell premium into a confirmed bear market" rule.
+- **VIX pause** (`cash_secured_put` / `put_credit_spread` only) -- refuses new trades if VIX is at/above
+  `--vix-threshold` (default 30), a systemic-stress signal.
+
+The market regime and VIX checks fail open (treat conditions as healthy) if the underlying data can't be
+fetched, logged as such rather than silently assumed, and both are exempt for `covered_call`, consistent
+with it not requiring an uptrend -- the FOMC check has no such exemption or fail-open case (its calendar
+is a static local list, not a live fetch that can fail). When any gate trips, the run stops before any
+per-ticker work and reports why via `result["blocked_reason"]` -- this is a whole-run gate, not a
+per-ticker rejection, so no individual stock's quality can override it.
 
 **Concentration risk (`ConcRisk`):** every candidate also shows an LLM-derived 0-100 estimate of
 structural product/customer/supplier/geographic concentration (e.g., "manufacturing concentrated with
@@ -756,6 +842,21 @@ to the fixed `--spread-width-strikes` count only when the short leg's IV is unav
 a "Width basis" report section when that happens, so the fallback is never silent. If the chain doesn't
 have enough strikes to reach the IV-based target, that candidate is rejected with the specific dollar
 target and expected move shown, same as the existing "not enough strikes" case.
+
+**Hard max-loss cap (`put_credit_spread` only, `--max-loss-dollars`, default unset):** the width-target
+formula above optimizes for premium relative to volatility, not an absolute dollar ceiling -- and because
+the long leg gets cheaper as it moves further OTM, a wider spread's extra premium never keeps pace with
+its extra max loss (`return_on_risk_pct` actually gets *worse*, not better, the wider you go). So on the
+highest-IV names -- the ones with the juiciest-looking premium -- the width-target formula also produces
+the largest dollar max loss, compounding risk exactly where it's least visible from the premium number
+alone. `--max-loss-dollars` is a hard position-sizing ceiling that overrides the width-target formula
+entirely: once the short/long legs are picked, if per-contract max loss (one contract = 100 shares) would
+exceed this cap, the spread is narrowed one strike at a time -- regardless of what
+`--expected-move-width-fraction` targeted -- until it fits under the cap, or rejected outright if even the
+narrowest possible (1-strike) spread still exceeds it. Trimmed candidates are called out in a "Narrowed
+below the width target by --max-loss-dollars" report section, same transparency pattern as the IV-fallback
+case above. This is deliberately a hard cap rather than folding into the Edge Score's `return_on_risk_pct`
+component -- a ranking weight can be outvoted by other signals scoring well; a cap can't be.
 
 **Edge Score (`Edge` column, drives sort order in both report tables):** a composite 0-100 ranking score
 blending everything else already computed for a candidate, so you don't have to eyeball a dozen columns

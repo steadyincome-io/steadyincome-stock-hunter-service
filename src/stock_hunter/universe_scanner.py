@@ -1,10 +1,18 @@
-"""Weekly $100B-crossing universe scanner.
+"""Weekly $50B-crossing universe scanner.
 
 Downloads the free, keyless NASDAQ Trader listed-company files (covers
 NYSE/NASDAQ/etc., stocks + ETFs, ~13,000 symbols), checks current market cap
 (stocks) or AUM (ETFs -- they don't have a market cap in the traditional
 sense) for every symbol, and writes a CSV of everything currently
 >= MARKET_CAP_THRESHOLD_USD to universe_scanner.OUTPUT_PATH.
+
+Stocks headquartered outside the US are excluded even if they clear the cap
+threshold (see _enrich_with_sector_industry) -- non-US companies listed on a
+US exchange (ADRs, e.g. BHP, ASML, TSM, SAP, SONY, NVO, BABA) are foreign
+private issuers under SEC rules: they file 20-F/6-K, not 10-K/10-Q, which
+this pipeline's SEC-fundamentals workers don't parse. Keeping them in the
+universe would mean screening/scoring names this pipeline structurally
+can't get good fundamentals data for.
 
 Run weekly (see .github/workflows/universe-scan.yml), not on every
 pipeline.yml run -- market caps rarely cross this threshold day-to-day, and a
@@ -27,14 +35,14 @@ try:
 except Exception:
     yf = None
 
-from .logger import banner, success, warning, error, progress
+from .logger import banner, success, warning, error, progress, info
 
-MARKET_CAP_THRESHOLD_USD = 100_000_000_000
+MARKET_CAP_THRESHOLD_USD = 50_000_000_000
 NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
 OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
 # Relative to CWD, same convention as schema.DB_NAME -- every workflow in
 # this repo already runs with the repo root as CWD.
-OUTPUT_PATH = "data/universe_100b.csv"
+OUTPUT_PATH = "data/universe_50b.csv"
 CSV_HEADER = ["ticker", "name", "asset_type", "sector", "industry", "market_cap"]
 
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -107,12 +115,22 @@ def _fetch_market_cap_or_aum(ticker, asset_type):
 
 def _enrich_with_sector_industry(ticker, name, asset_type, market_cap_usd):
     """Phase 2 -- only run on the small survivor list. sector/industry are
-    only meaningful for stocks; ETFs get sector='ETF' the same way
-    DEFAULT_UNIVERSE already represents them in schema.py."""
+    only meaningful for stocks; ETFs get sector='ETF' so the universe table
+    can still tell stocks and ETFs apart at a glance.
+
+    Returns None for a non-US-headquartered stock (see module docstring for
+    why) -- ETFs are never excluded here, since a US-domiciled fund's
+    holdings being international doesn't change that the fund itself files
+    normally; the exclusion is specifically about foreign private issuers
+    not filing 10-K/10-Q."""
     sector, industry = "", ""
     if asset_type == "Stock":
         try:
             info_dict = yf.Ticker(_yf_symbol(ticker)).info
+            country = info_dict.get("country") or ""
+            if country and country != "United States":
+                info(f"{ticker}: excluded -- headquartered in {country}, files 20-F/6-K not 10-K/10-Q")
+                return None
             sector = info_dict.get("sector") or ""
             industry = info_dict.get("industry") or ""
             name = info_dict.get("longName") or info_dict.get("shortName") or name
@@ -126,7 +144,7 @@ def _enrich_with_sector_industry(ticker, name, asset_type, market_cap_usd):
         "asset_type": asset_type,
         "sector": sector,
         "industry": industry,
-        "market_cap": round(market_cap_usd / 1e9, 1),  # billions, matching DEFAULT_UNIVERSE's convention
+        "market_cap": round(market_cap_usd / 1e9, 1),  # billions -- the universe table's convention
     }
 
 
@@ -153,12 +171,20 @@ def scan_universe(output_path=OUTPUT_PATH, threshold_usd=MARKET_CAP_THRESHOLD_US
 
     banner("Universe scan: Phase 2 -- sector/industry enrichment for survivors")
     rows = []
+    excluded_non_us = 0
     survivor_count = len(survivors)
     for index, (ticker, name, asset_type, market_cap_usd) in enumerate(survivors, start=1):
-        rows.append(_enrich_with_sector_industry(ticker, name, asset_type, market_cap_usd))
+        row = _enrich_with_sector_industry(ticker, name, asset_type, market_cap_usd)
+        if row is None:
+            excluded_non_us += 1
+        else:
+            rows.append(row)
         if index % 25 == 0 or index == survivor_count:
             progress(70 + (index / max(survivor_count, 1)) * 30, f"Phase 2: enriched {index}/{survivor_count}")
         time.sleep(REQUEST_DELAY_SEC)
+
+    if excluded_non_us:
+        info(f"Excluded {excluded_non_us} non-US-headquartered stock(s) -- no 10-K/10-Q data available for them")
 
     rows.sort(key=lambda r: r["market_cap"], reverse=True)
 

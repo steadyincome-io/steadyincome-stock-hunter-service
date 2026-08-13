@@ -6,10 +6,11 @@ from .schema import init_db, migrate_db, sync_universe_from_csv, DB_NAME, UNIVER
 from .logger import banner, step, info, success, warning, error, ticker_start, ticker_done, progress
 from .sec_edgar_worker import sync_sec_insider_data
 from .sec_etf_worker import sync_etf_reports
-from .sec_financials_worker import sync_10k_10q_financials
+from .sec_financials_worker import sync_10k_10q_financials, get_annual_revenue_history
 from .sec_eightk_worker import sync_8k_events
 from .drawdown_analytics import compute_and_store_drawdowns, drawdown_opportunity_score
 from .distress_analytics import compute_distress, store_distress_score
+from .dcf_valuation import compute_dcf_fair_value, compute_base_growth_rate
 from .scoring import (
     compute_insider_sentiment_score,
     get_recent_eightk_flags,
@@ -265,7 +266,7 @@ def _load_latest_financials_map(cursor):
     """Latest known balance-sheet/cash-flow fields per stock ticker, plus a
     simple YoY revenue growth rate from the two most recent 10-K filings."""
     cursor.execute("""
-        SELECT ticker, form_type, filing_date, revenue_usd, net_income_usd, operating_income_usd,
+        SELECT ticker, cik, form_type, filing_date, revenue_usd, net_income_usd, operating_income_usd,
                total_assets_usd, current_assets_usd, current_liabilities_usd,
                operating_cash_flow_usd, debt_to_equity_ratio, total_debt_usd, cash_usd,
                eps_diluted, shares_outstanding, capex_usd, depreciation_amortization_usd,
@@ -277,11 +278,12 @@ def _load_latest_financials_map(cursor):
     latest_map = {}
     annual_revenue_map = {}
     for row in cursor.fetchall():
-        (ticker, form_type, filing_date, revenue, net_income, operating_income,
+        (ticker, cik, form_type, filing_date, revenue, net_income, operating_income,
          total_assets, current_assets, current_liabilities, ocf, d2e, total_debt, cash,
          eps_diluted, shares_outstanding, capex, d_and_a, dividends_paid) = row
         if ticker not in latest_map:
             latest_map[ticker] = {
+                "cik": cik,
                 "revenue_usd": revenue,
                 "net_income_usd": net_income,
                 "operating_income_usd": operating_income,
@@ -409,10 +411,10 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
     init_db(db_path)
     migrate_db(db_path)
 
-    # Reconcile the active universe against the weekly $100B-crossing scan
-    # (see universe_scanner.py / .github/workflows/universe-scan.yml) if one
-    # has ever run -- no-ops on a fresh setup with no CSV yet, falling back
-    # to DEFAULT_UNIVERSE's seed from init_db() above.
+    # Reconcile the active universe against the weekly $50B-crossing scan
+    # (see universe_scanner.py / .github/workflows/universe-scan.yml) --
+    # data/universe_50b.csv is checked into git, so this is the sole source
+    # of the active universe, no hardcoded fallback seed exists in init_db().
     sync_universe_from_csv(db_path, UNIVERSE_CSV_PATH)
 
     banner(f"Starting Drawdown Analyzer pipeline run [{run_id}]")
@@ -668,6 +670,41 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                     insider_score, insider_meta = compute_insider_sentiment_score(cursor, ticker)
                     eightk_flags = get_recent_eightk_flags(cursor, ticker)
 
+                # ---- Growth-adjusted DCF fair value (sensitivity range, stocks only) --
+                # See dcf_valuation.py module docstring for the full methodology and
+                # why this is a low/base/high range rather than a single point target.
+                dcf_result = None
+                if asset_type == 'Stock':
+                    fin_for_dcf = stock_financials_map.get(ticker, {})
+                    ocf = fin_for_dcf.get('annual_operating_cash_flow_usd')
+                    capex = fin_for_dcf.get('annual_capex_usd')
+                    base_fcf = (ocf - capex) if (ocf is not None and capex is not None) else None
+                    # Multi-year revenue history comes straight from the cached SEC
+                    # companyfacts payload (get_annual_revenue_history), not from
+                    # counting sec_financials rows -- that table may only ever hold
+                    # the latest 10-K depending on how fetch_10k_10q_filings' days_back
+                    # is configured, but companyfacts already has the full historical
+                    # time series regardless of how many rows got stored locally.
+                    revenue_history = get_annual_revenue_history(ticker, fin_for_dcf.get('cik'))
+                    growth_rate = compute_base_growth_rate(
+                        revenue_history,
+                        fallback_growth_pct=fin_for_dcf.get('revenue_growth_pct'),
+                    )
+                    dcf_result = compute_dcf_fair_value(
+                        base_fcf=base_fcf,
+                        growth_rate=growth_rate,
+                        beta=stock_info.get('beta'),
+                        market_cap_usd=market_cap_usd if market_cap_usd else (market_cap_billion * 1e9 if market_cap_billion else None),
+                        total_debt_usd=fin_for_dcf.get('total_debt_usd'),
+                        cash_usd=fin_for_dcf.get('cash_usd'),
+                        shares_outstanding=fin_for_dcf.get('shares_outstanding'),
+                    )
+                dcf_margin_of_safety_pct = None
+                if dcf_result and current_price:
+                    dcf_margin_of_safety_pct = round(
+                        (dcf_result["fair_value_base"] - current_price) / current_price * 100, 2
+                    )
+
                 # ---- Legacy PE/ETF-driven valuation score (kept as the valuation input) --
                 legacy_valuation_score = calculate_quality_score(pe, current_dd, asset_type, etf_metrics)
 
@@ -747,6 +784,10 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                         "insider_sentiment_score": insider_score if asset_type == 'Stock' else None,
                         "drawdown_opportunity_score": drawdown_opp_score,
                         "short_percent_of_float": short_pct_float,
+                        "dcf_fair_value_low": (dcf_result or {}).get("fair_value_low"),
+                        "dcf_fair_value_base": (dcf_result or {}).get("fair_value_base"),
+                        "dcf_fair_value_high": (dcf_result or {}).get("fair_value_high"),
+                        "dcf_margin_of_safety_pct": dcf_margin_of_safety_pct,
                     },
                     available_columns=daily_snapshot_columns,
                 )

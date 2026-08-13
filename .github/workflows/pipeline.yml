@@ -12,8 +12,8 @@ on:
       - ".github/workflows/pipeline.yml"
   schedule:
     # Tuesday 05:00 UTC -- comfortably ahead of Wednesday even at this job's
-    # full 360-minute timeout, and after universe-scan.yml's Sunday 06:17 UTC
-    # run so a fresh data/universe_100b.csv is already sitting in the repo
+    # full 360-minute timeout, and after universe-scan.yml's Sunday 06:19 UTC
+    # run so a fresh data/universe_50b.csv is already sitting in the repo
     # before this kicks off.
     - cron: "0 5 * * 2"
   workflow_dispatch: {}
