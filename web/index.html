@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Drawdown Analyzer Dashboard</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Drawdown Analyzer Dashboard</h1>
+    <div class="subtitle">Static, read-only dashboard -- runs entirely in your browser via SQLite/WebAssembly. No backend.</div>
+  </header>
+
+  <div id="load-status">Loading database…</div>
+
+  <div id="app" class="hidden">
+    <div class="summary-section">
+      <div id="latest-run-info"></div>
+      <div id="summary-cards"></div>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab-button active" data-tab="tab-universe">Universe Screener</button>
+      <button class="tab-button" data-tab="tab-ticker">Ticker Detail</button>
+      <button class="tab-button" data-tab="tab-runs">Run History</button>
+    </nav>
+
+    <section id="tab-universe" class="tab-panel active">
+      <div class="filters-row">
+        <select id="filter-asset-type">
+          <option>All</option>
+          <option>Stock</option>
+          <option>ETF</option>
+        </select>
+        <input type="text" id="filter-search" placeholder="Search ticker, name, or sector..." />
+        <label><input type="checkbox" id="filter-only-snapshot" checked /> Only tickers with a snapshot</label>
+        <button class="action-btn" id="export-csv">Download filtered CSV</button>
+      </div>
+      <div id="universe-count"></div>
+      <div class="table-scroll">
+        <table id="universe-table">
+          <thead id="universe-table-head"></thead>
+          <tbody id="universe-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tab-ticker" class="tab-panel">
+      <select id="ticker-select"></select>
+      <h2 id="ticker-title"></h2>
+      <div id="ticker-subtitle"></div>
+
+      <div id="ticker-overview-cards" class="section"></div>
+
+      <div class="section">
+        <h3>Price history (last 180 sessions)</h3>
+        <div class="chart-container"><canvas id="price-chart"></canvas></div>
+      </div>
+
+      <div class="section">
+        <h3>Drawdown events</h3>
+        <div id="drawdown-events-table"></div>
+      </div>
+
+      <div class="section">
+        <h3>Financial distress</h3>
+        <div id="distress-detail" class="metric-cards"></div>
+      </div>
+
+      <div class="section">
+        <h3>SEC filings + narrative summaries</h3>
+        <div id="filings-table"></div>
+      </div>
+
+      <div class="section">
+        <h3>Insider trades</h3>
+        <div id="insider-trades-table"></div>
+      </div>
+
+      <div class="section">
+        <h3>8-K debt/bankruptcy events</h3>
+        <div id="eightk-table"></div>
+      </div>
+
+      <div class="section" id="etf-holdings-section">
+        <h3>ETF holdings</h3>
+        <div id="etf-holdings-caption" class="metric-label"></div>
+        <div id="etf-holdings-table"></div>
+      </div>
+    </section>
+
+    <section id="tab-runs" class="tab-panel">
+      <div class="section">
+        <h3>Pipeline run history</h3>
+        <div id="pipeline-runs-table"></div>
+      </div>
+    </section>
+  </div>
+
+  <footer>Data is static as of the last pipeline run -- re-upload drawdown_analyzer.db to refresh.</footer>
+
+  <script src="js/format.js"></script>
+  <script src="js/queries.js"></script>
+  <script src="js/sql-loader.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

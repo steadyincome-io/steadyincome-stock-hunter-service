@@ -930,6 +930,91 @@ def score_concentration_risk(risk_text: str, mda_text: str = "", business_text: 
     return _parse_concentration_payload(data)
 
 
+NEWS_SENTIMENT_PROMPT = """
+You are an equity analyst reviewing a batch of recent news headlines and summaries for a single stock,
+called just before a trade decision. Your job is NOT general sentiment about the company's prospects --
+it's specifically to catch near-term, event-driven risks that could move the stock but that a
+quality/valuation/risk score derived from quarterly filings would never see, since filings are stale by
+the time they're read.
+
+Given the following headlines, produce:
+1. A sentiment: one of "positive", "neutral", "negative" -- your overall read of these specific headlines
+   for this stock over the next few days/weeks, not the company's long-term outlook.
+2. A one-sentence (max 200 characters) plain-English summary of what's actually going on right now.
+3. flagged_themes: a list of 0-5 objects, each with "theme" (one of "war_geopolitical", "oil_commodity",
+   "supply_chain", "tariff_trade", "regulatory_legal", "other_macro") and "evidence" (max 150 characters,
+   a direct paraphrase of the specific headline/detail that triggered the flag). Only include a theme if a
+   headline genuinely references it for THIS company -- do not flag generic market commentary, and do not
+   invent a theme that isn't actually present in the text.
+
+If nothing notable is happening, return sentiment "neutral", a plain summary, and an empty flagged_themes
+list. Do not invent news, catalysts, or certainty beyond what's in the text below.
+
+Return ONLY a JSON object with keys "sentiment", "summary", and "flagged_themes".
+
+Headlines:
+"""
+
+_NEWS_SENTIMENT_VALID_THEMES = {
+    "war_geopolitical", "oil_commodity", "supply_chain", "tariff_trade", "regulatory_legal", "other_macro",
+}
+
+
+def _parse_news_sentiment_payload(data: dict) -> dict:
+    sentiment = data.get("sentiment", "neutral")
+    if sentiment not in ("positive", "neutral", "negative"):
+        sentiment = "neutral"
+    summary = _truncate(data.get("summary", ""), 200)
+    themes = []
+    for item in (data.get("flagged_themes") or [])[:5]:
+        if not isinstance(item, dict):
+            continue
+        theme = item.get("theme")
+        if theme not in _NEWS_SENTIMENT_VALID_THEMES:
+            continue
+        themes.append({"theme": theme, "evidence": _truncate(item.get("evidence", ""), 150)})
+    return {"sentiment": sentiment, "summary": summary, "flagged_themes": themes}
+
+
+def score_news_sentiment(headlines_text: str, label: str = "news_sentiment") -> dict:
+    """Recent-news sentiment + event-risk flagging for a single ticker, meant
+    to be called on a small final candidate list (premium_screener.py), not
+    the whole universe -- headlines are noisy/time-sensitive, and this is one
+    extra LLM call per candidate.
+
+    Same GEMINI_API_KEY-first, primary-provider-fallback pattern as
+    score_concentration_risk, and for the same reason: a small always-on
+    Gemini/Gemma tier tends to be more reliable at this kind of structured
+    extraction than whatever the primary provider defaults to. Falls back to
+    the primary provider only when no Gemini key is configured.
+
+    Returns {"sentiment": str, "summary": str, "flagged_themes": [{"theme": str, "evidence": str}, ...]}.
+    """
+    if not headlines_text or not headlines_text.strip():
+        return {"sentiment": "neutral", "summary": "No recent news found.", "flagged_themes": []}
+
+    prompt = NEWS_SENTIMENT_PROMPT + headlines_text[:4000]
+    repair_prompt = (
+        prompt
+        + "\n\nSTRICT REPAIR INSTRUCTION: return only a valid JSON object with keys "
+        + '"sentiment", "summary", and "flagged_themes". No prose, no markdown, no code fences.'
+    )
+    messages = [{"role": "user", "content": prompt}]
+
+    if _get_gemini_key():
+        _throttle_provider("gemini")
+        data = _call_and_parse_json_gemini(
+            messages, repair_prompt, label, temperature=_env_float("NARRATIVE_TEMPERATURE", 0.0)
+        )
+        return _parse_news_sentiment_payload(data)
+
+    if not _llm_backend_available():
+        raise RuntimeError(f"LLM backend unavailable for [{label}]")
+    info(f"GEMINI_API_KEY not set; news sentiment for [{label}] uses primary provider ({_get_provider()})")
+    data = _chat_completion_json(messages, label, repair_prompt)
+    return _parse_news_sentiment_payload(data)
+
+
 def get_comprehensive_narrative_analysis(risk_text, mda_text, legal_text,
                                          commitments_text, buybacks_text,
                                          liquidity_text, subsequent_text,

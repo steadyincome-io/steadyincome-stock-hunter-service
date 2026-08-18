@@ -32,6 +32,7 @@ import pandas as pd
 
 from .schema import DB_NAME
 from .logger import banner, step, info, success, warning, error
+from .ai_narrative import score_news_sentiment
 
 try:
     import yfinance as yf
@@ -544,6 +545,34 @@ def fetch_live_price(ticker):
     except Exception as exc:
         warning(f"{ticker}: live price fetch failed, falling back to stored snapshot price: {exc}")
         return None
+
+
+NEWS_HEADLINE_COUNT = 8
+
+
+def fetch_recent_news_headlines(ticker, limit=NEWS_HEADLINE_COUNT):
+    """Recent news title+summary text for a ticker, via yfinance's free
+    Ticker.news (real Yahoo Finance news feed, verified live -- returns
+    genuinely current headlines, not cached/stale data). Returns "" on any
+    failure or empty result, so the caller can treat that the same as
+    "nothing notable" rather than crashing the whole candidate."""
+    if yf is None:
+        return ""
+    try:
+        news = yf.Ticker(_yf_symbol(ticker)).news
+        if not news:
+            return ""
+        parts = []
+        for item in news[:limit]:
+            content = item.get("content", {})
+            title = content.get("title", "")
+            summary = content.get("summary", "")
+            if title:
+                parts.append(f"{title}: {summary}" if summary else title)
+        return "\n\n".join(parts)
+    except Exception as exc:
+        warning(f"{ticker}: news fetch failed: {exc}")
+        return ""
 
 
 def _find_weekly_expiration(stock):
@@ -1127,7 +1156,8 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
                   vix_threshold=VIX_PAUSE_THRESHOLD, min_open_interest=MIN_OPEN_INTEREST,
                   show_day_of_week_backtest=True, min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE,
                   expected_move_width_fraction=EXPECTED_MOVE_WIDTH_FRACTION,
-                  max_loss_dollars=MAX_LOSS_DOLLARS_CAP, fomc_lookahead_days=FOMC_LOOKAHEAD_DAYS):
+                  max_loss_dollars=MAX_LOSS_DOLLARS_CAP, fomc_lookahead_days=FOMC_LOOKAHEAD_DAYS,
+                  show_news_sentiment=True):
     if strategy_key not in STRATEGIES:
         raise ValueError(f"Unknown strategy '{strategy_key}'. Choose from: {list(STRATEGIES)}")
 
@@ -1289,6 +1319,16 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
         # printed order.
         final_rows.sort(key=lambda r: (r.get("edge_score") if r.get("edge_score") is not None else -999), reverse=True)
 
+    if show_news_sentiment:
+        step("Step 7: recent-news sentiment + event-risk check (final candidates only)")
+        for row in final_rows:
+            headlines = fetch_recent_news_headlines(row["ticker"])
+            try:
+                row["news_sentiment"] = score_news_sentiment(headlines, label=f"{row['ticker']}_news")
+            except Exception as exc:
+                warning(f"{row['ticker']}: news sentiment scoring failed: {exc}")
+                row["news_sentiment"] = None
+
     rejected_rows = []
     for ticker, reason in rejections.items():
         base = by_ticker.get(ticker, {})
@@ -1386,6 +1426,38 @@ def _print_dcf_detail(candidates):
             f"${r['dcf_fair_value_high']:.2f} (low/base/high) vs current ${r['price']:.2f} "
             f"(margin of safety {mos_str})"
         )
+
+
+_NEWS_THEME_LABELS = {
+    "war_geopolitical": "War/geopolitical",
+    "oil_commodity": "Oil/commodity",
+    "supply_chain": "Supply chain",
+    "tariff_trade": "Tariff/trade",
+    "regulatory_legal": "Regulatory/legal",
+    "other_macro": "Other macro",
+}
+
+
+def _print_news_sentiment_detail(candidates):
+    """--show-news-sentiment (on by default): recent-news sentiment + event-
+    risk themes for final candidates only, via score_news_sentiment
+    (ai_narrative.py). Purely informational -- headlines are a noisy,
+    time-sensitive signal, not something to filter candidates on
+    automatically. Always prints every scored candidate (not just flagged
+    ones), so a quiet "nothing notable" result is visible too, not just
+    negative surprises."""
+    scored = [r for r in candidates if r.get("news_sentiment") is not None]
+    if not scored:
+        return
+    print()
+    print("Recent-news sentiment (final candidates only, via LLM on real yfinance headlines --")
+    print("informational only, not factored into Edge Score; see README for methodology):")
+    for r in scored:
+        ns = r["news_sentiment"]
+        print(f"  {r['ticker']}: [{ns['sentiment']}] {ns['summary'] or '(no summary)'}")
+        for theme in ns.get("flagged_themes", []):
+            label = _NEWS_THEME_LABELS.get(theme["theme"], theme["theme"])
+            print(f"      -- {label}: {theme['evidence']}")
 
 
 def _print_spread_width_detail(candidates):
@@ -1501,6 +1573,7 @@ def _print_single_leg_report(candidates, strategy_key):
     _print_short_squeeze_detail(candidates, strategy_key)
     _print_strike_walk_detail(candidates)
     _print_dcf_detail(candidates)
+    _print_news_sentiment_detail(candidates)
     _print_day_of_week_backtest(candidates)
 
 
@@ -1558,6 +1631,7 @@ def _print_spread_report(candidates):
     _print_concentration_detail(candidates)
     _print_spread_width_detail(candidates)
     _print_dcf_detail(candidates)
+    _print_news_sentiment_detail(candidates)
     _print_day_of_week_backtest(candidates)
 
 
@@ -1658,6 +1732,12 @@ if __name__ == "__main__":
                               "only (no 5y intraday data exists). On by default (adds one extra yfinance history "
                               "fetch per final candidate, not per pool candidate, so the added cost is small); "
                               "disable with --no-show-day-of-week-backtest.")
+    parser.add_argument("--show-news-sentiment", action=argparse.BooleanOptionalAction, default=True,
+                         help="For final candidates only, fetch recent news headlines (yfinance) and score "
+                              "sentiment + event-risk themes (war/geopolitical, oil/commodity, supply chain, "
+                              "tariff/trade, regulatory/legal) via LLM (GEMINI_API_KEY, same as concentration "
+                              "risk scoring). On by default (one extra LLM call per final candidate, not per "
+                              "pool candidate); disable with --no-show-news-sentiment.")
     args = parser.parse_args()
 
     result = run_screener(
@@ -1678,5 +1758,6 @@ if __name__ == "__main__":
         min_open_interest=args.min_open_interest,
         show_day_of_week_backtest=args.show_day_of_week_backtest,
         min_premium_pct_of_strike=args.min_premium_pct_of_strike,
+        show_news_sentiment=args.show_news_sentiment,
     )
     print_report(result, show_rejected=args.show_rejected)
