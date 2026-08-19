@@ -1040,6 +1040,29 @@ def diversify_by_correlation(ranked_tickers, returns_df, max_picks, max_correlat
     return picked, rejections
 
 
+# ---- return_potential annualization ----------------------------------------
+# Raw yield alone silently favors whichever DTE a candidate happened to land
+# on -- the weekly expiration target ranges 4-10 days out
+# (_find_weekly_expiration), so two candidates with identical raw yield but
+# different DTE within that window aren't actually equally good: the
+# shorter-dated one earns the same return in less time, i.e. capital could be
+# redeployed sooner. compute_edge_score annualizes before scoring
+# (raw_pct * 365 / days_to_expiration), the same normalization "annualized
+# return" generally means in options screening, so a 4-day and a 10-day
+# candidate are genuinely comparable instead of the score being blind to DTE.
+#
+# The two raw-yield thresholds below (used pre-annualization, one for
+# spreads' return-on-risk%, one for single-leg premium-as-%-of-strike) are
+# scaled by 365/7 (7 = the midpoint of the 4-10 day window) so a "typical"
+# weekly candidate still lands near the same score as before this change --
+# not a silent re-calibration of what counts as a good return, just removing
+# the DTE-blindness.
+RETURN_ANNUALIZATION_REFERENCE_DAYS = 7
+RETURN_ON_RISK_PCT_THRESHOLD_RAW = 50.0
+PREMIUM_PCT_OF_STRIKE_THRESHOLD_RAW = 3.0
+RETURN_ON_RISK_ANNUALIZED_THRESHOLD = RETURN_ON_RISK_PCT_THRESHOLD_RAW * 365 / RETURN_ANNUALIZATION_REFERENCE_DAYS
+PREMIUM_PCT_ANNUALIZED_THRESHOLD = PREMIUM_PCT_OF_STRIKE_THRESHOLD_RAW * 365 / RETURN_ANNUALIZATION_REFERENCE_DAYS
+
 # ---- composite ranking score -----------------------------------------------
 # Weights are a judgment call, not derived from a backtest of the score
 # itself -- documented here and in the README so they're inspectable and
@@ -1080,15 +1103,20 @@ def compute_edge_score(row):
     # Return potential: put_credit_spread already expresses this as return-on-
     # risk (max profit / max loss, i.e. relative to actual capital at risk).
     # Single-leg strategies don't post collateral against a defined max loss,
-    # so premium-as-%-of-strike is the closest equivalent.
+    # so premium-as-%-of-strike is the closest equivalent. Annualized before
+    # scoring -- see RETURN_ANNUALIZATION_REFERENCE_DAYS above for why.
+    days = row.get("days_to_expiration")
+    annualize = (365 / days) if days else 1.0
+
     ror_pct = row.get("return_on_risk_pct")
     if ror_pct is not None:
-        return_component = max(0.0, min(100.0, ror_pct / 50.0 * 100))
+        return_component = max(0.0, min(100.0, (ror_pct * annualize) / RETURN_ON_RISK_ANNUALIZED_THRESHOLD * 100))
     else:
         premium = row.get("premium")
         strike = row.get("strike")
         if premium is not None and strike:
-            return_component = max(0.0, min(100.0, (premium / strike * 100) / 3.0 * 100))
+            raw_pct = premium / strike * 100
+            return_component = max(0.0, min(100.0, (raw_pct * annualize) / PREMIUM_PCT_ANNUALIZED_THRESHOLD * 100))
         else:
             return_component = 50.0
 

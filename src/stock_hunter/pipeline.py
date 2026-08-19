@@ -1,6 +1,7 @@
 import sqlite3
 import time
 import json
+import pandas as pd
 from datetime import datetime
 from .schema import init_db, migrate_db, sync_universe_from_csv, DB_NAME, UNIVERSE_CSV_PATH
 from .logger import banner, step, info, success, warning, error, ticker_start, ticker_done, progress
@@ -585,12 +586,26 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                 current_dd = round(((current_price - high_52w) / high_52w) * 100, 2)
                 max_dd_1y = round(((low_52w - high_52w) / high_52w) * 100, 2)
 
-                # Store daily price history series: full backfill on first pass, else last 30 days
+                # Store daily price history series: full backfill on first pass, else last 30 days.
+                # yfinance occasionally emits a dividend-only pseudo-row with no real trading data
+                # (OHLC all NaN, e.g. an ex-dividend date with no separate price bar) -- confirmed
+                # live against CARR's real 5y history. Python's sqlite3 module silently binds
+                # float('nan') as SQL NULL, which violates close_price's NOT NULL constraint --
+                # and since this is a single executemany() batch, one bad row was failing the
+                # ENTIRE ticker's insert (all ~1255 rows on a 5y backfill), not just that one row.
+                # A 5y backfill (needs_backfill=True, i.e. every newly-added ticker) hits this far
+                # more often than a 30-day incremental update, which is why 284/285 tickers failed
+                # in one real run right after the $50B threshold change added a wave of brand-new
+                # tickers needing their first full backfill.
                 history_to_store = hist if needs_backfill else hist.tail(30)
                 price_rows = [
                     (ticker, idx.strftime('%Y-%m-%d'), float(row['Close']), int(row['Volume']))
                     for idx, row in history_to_store.iterrows()
+                    if pd.notna(row['Close']) and pd.notna(row['Volume'])
                 ]
+                skipped = len(history_to_store) - len(price_rows)
+                if skipped:
+                    warning(f"{ticker}: skipped {skipped} price_history row(s) with missing Close/Volume (e.g. a dividend-only pseudo-row)")
                 cursor.executemany("""
                     INSERT OR REPLACE INTO price_history (ticker, trade_date, close_price, volume)
                     VALUES (?, ?, ?, ?)
