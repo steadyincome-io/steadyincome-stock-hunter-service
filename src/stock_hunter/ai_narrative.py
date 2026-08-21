@@ -86,7 +86,13 @@ class LLMHTTPError(RuntimeError):
 
 def _get_provider() -> str:
     _ensure_env_loaded()
-    return os.getenv("NARRATIVE_PROVIDER", "openai").strip().lower()
+    # gemini default -- NIM's free-tier meta/llama-3.1-8b-instruct deployment was
+    # observed going HTTP 400 "DEGRADED function cannot be invoked" for hours at a
+    # time during a real 2026-08-19 pipeline run (confirmed server-side, not a
+    # client rate/payload issue), while Gemini's confirmed quota (30 RPM / 14.4K
+    # RPD on gemma-4-31b-it) held up cleanly. NIM/Cohere remain available as the
+    # fallback provider -- see _get_fallback_provider.
+    return os.getenv("NARRATIVE_PROVIDER", "gemini").strip().lower()
 
 
 def _get_fallback_provider() -> str:
@@ -94,7 +100,8 @@ def _get_fallback_provider() -> str:
     fallback = os.getenv("NARRATIVE_FALLBACK_PROVIDER", "").strip().lower()
     if fallback:
         return fallback
-    if _get_provider() == "cohere":
+    provider = _get_provider()
+    if provider in ("gemini", "cohere"):
         return "nim"
     return ""
 
@@ -106,6 +113,8 @@ def _get_model(provider: str | None = None) -> str:
     fallback_model = os.getenv("NARRATIVE_FALLBACK_MODEL", "").strip()
     if fallback_model and provider == fallback_provider:
         return fallback_model
+    if provider == "gemini":
+        return _get_gemini_model()
     if provider == "cohere":
         return os.getenv("COHERE_MODEL", os.getenv("NARRATIVE_MODEL", "command-a-03-2025"))
     if provider == "nim":
@@ -154,6 +163,17 @@ def _get_gemini_base() -> str:
 def _get_min_interval_sec(provider: str | None = None) -> float:
     _ensure_env_loaded()
     provider = (provider or _get_provider()).strip().lower()
+    if provider == "gemini":
+        # Confirmed via the account's actual rate-limit page: gemma-4-31b-it
+        # allows 30 RPM / 14.4K RPD. 0.4 rps (24 RPM) leaves headroom under
+        # that ceiling now that gemini is the primary narrative provider
+        # (~285 tickers x 6 sections/ticker per full run) as well as the
+        # concentration/news-sentiment caller -- both route through this same
+        # provider-keyed throttle now, so the limit is shared correctly
+        # instead of each call site enforcing its own independent pace and
+        # stacking above the real quota.
+        rps = max(_env_float("GEMINI_MAX_RPS", 0.4), 0.0)
+        return (1.0 / rps) if rps > 0 else 0.0
     if "NARRATIVE_MAX_RPS" in os.environ:
         rps = max(_env_float("NARRATIVE_MAX_RPS", 1.0), 0.0)
     else:
@@ -173,11 +193,10 @@ def _get_min_interval_sec(provider: str | None = None) -> float:
     return (1.0 / rps) if rps > 0 else 0.0
 
 
-_last_narrative_request_time = 0.0
-
-
 def _llm_backend_available() -> bool:
     provider = _get_provider()
+    if provider == "gemini":
+        return bool(_get_gemini_key())
     if provider == "cohere":
         return bool(_get_cohere_key())
     if provider == "nim":
@@ -392,36 +411,20 @@ def _fallback_bullets(text: str, max_bullets: int, max_chars: int) -> list:
     return bullets
 
 
-def _throttle_narrative_requests():
-    global _last_narrative_request_time
-    min_interval = _get_min_interval_sec()
-    if min_interval <= 0:
-        return
-    elapsed = time.time() - _last_narrative_request_time
-    if elapsed < min_interval:
-        time.sleep(min_interval - elapsed)
-    _last_narrative_request_time = time.time()
-
-
-# Separate from the primary-provider throttle above: used for the extra
-# concentration-risk voting calls (Gemini), which run alongside whatever the
-# primary provider is and need their own independent rate limit.
+# Keyed by provider (not a single global clock) so each upstream API's quota
+# is tracked independently -- e.g. narrative generation and concentration/
+# news-sentiment scoring can both hit Gemini and correctly share one rate
+# limit instead of each enforcing its own pace and stacking above the real
+# quota (this used to be two separate throttles -- a global one for whatever
+# NARRATIVE_PROVIDER was, and a per-provider one only used for the Gemini
+# side calls -- which would have double-counted Gemini traffic the moment
+# Gemini became both the primary provider and the side-call provider).
 _last_request_time_by_provider: Dict[str, float] = {}
 
 
 def _throttle_provider(provider: str):
     provider = provider.strip().lower()
-    if provider == "gemini":
-        # Confirmed via the account's actual rate-limit page: gemma-4-31b-it
-        # (the concentration-scoring model) allows 30 RPM / 14.4K RPD, well
-        # above this default -- 0.2 rps just keeps the same conservative pace
-        # used for other providers in this file, with plenty of headroom to
-        # raise via GEMINI_MAX_RPS if a full run's runtime matters more than
-        # staying maximally conservative.
-        rps = max(_env_float("GEMINI_MAX_RPS", 0.2), 0.0)
-        min_interval = (1.0 / rps) if rps > 0 else 0.0
-    else:
-        min_interval = _get_min_interval_sec(provider)
+    min_interval = _get_min_interval_sec(provider)
     if min_interval <= 0:
         return
     last = _last_request_time_by_provider.get(provider, 0.0)
@@ -682,6 +685,11 @@ def _call_gemini(messages: List[Dict[str, Any]], api_key: str, model: str | None
 
 def _route_chat_completion(messages: List[Dict[str, Any]], provider: str | None = None) -> str:
     provider = (provider or _get_provider()).strip().lower()
+    if provider == "gemini":
+        key = _get_gemini_key()
+        if not key:
+            raise RuntimeError("GEMINI_API_KEY is not set")
+        return _call_gemini(messages, key, temperature=_env_float("NARRATIVE_TEMPERATURE", 0.0))
     if provider == "cohere":
         key = _get_cohere_key()
         if not key:
@@ -700,19 +708,41 @@ def _route_chat_completion(messages: List[Dict[str, Any]], provider: str | None 
     return _call_openai_like(messages, key, openai_base)
 
 
-def _is_rate_limit_error(exc: Exception) -> bool:
-    return isinstance(exc, LLMHTTPError) and exc.status_code == 429
+def _is_transient_llm_error(exc: Exception) -> bool:
+    """True for failures worth falling back to a different provider for,
+    rather than just exhausting this call's own retries and giving up.
+
+    Originally 429-only. Broadened after a real run (2026-08-19) spent ~6
+    hours hammering a degraded NIM endpoint with zero fallback: 143 plain
+    read-timeouts (not HTTP responses at all, so LLMHTTPError never applied)
+    and 20 HTTP 400 "DEGRADED function cannot be invoked" (NIM's own
+    server-side unhealthy-deployment signal, not a 429) -- neither was
+    classified as a rate limit, so the fallback path never triggered despite
+    a fallback provider being configured and available the whole time.
+    """
+    if isinstance(exc, LLMHTTPError):
+        if exc.status_code == 429 or exc.status_code >= 500:
+            return True
+        if exc.status_code == 400 and "DEGRADED" in (exc.body or "").upper():
+            return True
+        return False
+    if requests is not None and isinstance(exc, requests.exceptions.RequestException):
+        # Covers ReadTimeout/ConnectTimeout/ConnectionError -- never an
+        # LLMHTTPError since the request never got an HTTP response at all.
+        return True
+    return False
 
 
-def _maybe_fallback_on_rate_limit(messages: List[Dict[str, Any]], label: str, primary_provider: str, exc: Exception) -> str | None:
-    if not _is_rate_limit_error(exc):
+def _maybe_fallback_on_transient_error(messages: List[Dict[str, Any]], label: str, primary_provider: str, exc: Exception) -> str | None:
+    if not _is_transient_llm_error(exc):
         return None
     fallback_provider = _get_fallback_provider()
     if not fallback_provider or fallback_provider == primary_provider:
-        warning(f"LLM rate limit hit [{label}] and no fallback provider is configured")
+        warning(f"LLM transient error [{label}] and no fallback provider is configured")
         return None
-    info(f"LLM rate limit hit [{label}]; falling back from {primary_provider} to {fallback_provider}")
+    info(f"LLM transient error [{label}]; falling back from {primary_provider} to {fallback_provider}")
     fallback_key_available = {
+        "gemini": bool(_get_gemini_key()),
         "cohere": bool(_get_cohere_key()),
         "nim": bool(_get_nim_key()),
         "openai": bool(_get_openai_key()),
@@ -726,14 +756,14 @@ def _maybe_fallback_on_rate_limit(messages: List[Dict[str, Any]], label: str, pr
 def _chat_completion(messages, label: str = "narrative"):
     provider = _get_provider()
     model = _get_model(provider)
-    max_tokens = _env_int("NARRATIVE_MAX_TOKENS", 800)
+    max_tokens = _env_int("GEMINI_MAX_TOKENS", 4000) if provider == "gemini" else _env_int("NARRATIVE_MAX_TOKENS", 800)
     info(f"LLM call start [{label}] provider={provider} model={model} max_tokens={max_tokens}")
     _log_llm_request(label, messages)
-    _throttle_narrative_requests()
+    _throttle_provider(provider)
     try:
         response = _route_chat_completion(messages, provider=provider)
     except Exception as exc:
-        fallback_response = _maybe_fallback_on_rate_limit(messages, label, provider, exc)
+        fallback_response = _maybe_fallback_on_transient_error(messages, label, provider, exc)
         if fallback_response is not None:
             fallback_provider = _get_fallback_provider()
             fallback_model = _get_model(fallback_provider)
@@ -859,37 +889,20 @@ def _parse_concentration_payload(data: dict) -> dict:
     return {"concentration_score": score, "summary": summary, "concentration_type": concentration_type}
 
 
-def _call_and_parse_json_gemini(messages: list, repair_prompt: str, label: str, temperature: float) -> dict:
-    api_key = _get_gemini_key()
-    info(f"LLM call start [{label}] provider=gemini model={_get_gemini_model()} temperature={temperature}")
-    _log_llm_request(label, messages)
-    raw = _call_gemini(messages, api_key, temperature=temperature)
-    _log_llm_response(label, raw)
-    success(f"LLM call done [{label}]")
-    try:
-        return _parse_json_response_or_raise(raw, label)
-    except Exception as exc:
-        _log_json_state(label, "failed", str(exc))
-        warning(f"LLM JSON parse failed [{label}]; retrying once with stricter JSON-only prompt")
-        repair_label = f"{label} repair"
-        _throttle_provider("gemini")
-        raw_repair = _call_gemini([{"role": "user", "content": repair_prompt}], api_key, temperature=temperature)
-        _log_llm_response(repair_label, raw_repair)
-        return _parse_json_response_or_raise(raw_repair, repair_label)
-
-
 def score_concentration_risk(risk_text: str, mda_text: str = "", business_text: str = "", label: str = "concentration_risk") -> dict:
     """Structural concentration risk (product/customer/supplier/geographic), extracted from the
     risk-factor, MD&A, and Item 1 Business text already fetched for other narrative scoring -- no
     new data source required. Business text is included because segment/product/geographic revenue
     mix is usually narratively disclosed there, not in risk factors or MD&A.
 
-    Scored by a single Gemini call (GEMINI_MODEL, e.g. a Gemma flash-lite tier with a high daily
-    quota) when GEMINI_API_KEY is set -- a small free model on the primary provider (nim) was
+    Routed through _chat_completion_json like every other narrative call -- i.e. whatever
+    NARRATIVE_PROVIDER is set to, with the same retry and NARRATIVE_FALLBACK_PROVIDER behavior.
+    This used to hardcode Gemini regardless of NARRATIVE_PROVIDER (a small model on NIM was once
     observed defaulting to a generic "none" verdict even when the input text plainly contained
-    concentration language, so this is intentionally routed to a separate, more reliable model
-    rather than trusting the primary provider. Falls back to the primary provider only when no
-    Gemini key is configured, so this still works without one.
+    concentration language), which meant switching providers required remembering this function
+    was the exception. Unified deliberately so flipping NARRATIVE_PROVIDER is a single source of
+    truth for every LLM call in this file -- if that NIM-quality issue resurfaces, it'll now show
+    up here too, which is the intended tradeoff (one lever, not a silent carve-out).
 
     Returns {"concentration_score": int, "summary": str, "concentration_type": str}.
     """
@@ -916,16 +929,8 @@ def score_concentration_risk(risk_text: str, mda_text: str = "", business_text: 
     )
     messages = [{"role": "user", "content": prompt}]
 
-    if _get_gemini_key():
-        _throttle_provider("gemini")
-        data = _call_and_parse_json_gemini(
-            messages, repair_prompt, label, temperature=_env_float("NARRATIVE_TEMPERATURE", 0.0)
-        )
-        return _parse_concentration_payload(data)
-
     if not _llm_backend_available():
         raise RuntimeError(f"LLM backend unavailable for [{label}]")
-    info(f"GEMINI_API_KEY not set; concentration scoring for [{label}] uses primary provider ({_get_provider()})")
     data = _chat_completion_json(messages, label, repair_prompt)
     return _parse_concentration_payload(data)
 
@@ -982,11 +987,9 @@ def score_news_sentiment(headlines_text: str, label: str = "news_sentiment") -> 
     the whole universe -- headlines are noisy/time-sensitive, and this is one
     extra LLM call per candidate.
 
-    Same GEMINI_API_KEY-first, primary-provider-fallback pattern as
-    score_concentration_risk, and for the same reason: a small always-on
-    Gemini/Gemma tier tends to be more reliable at this kind of structured
-    extraction than whatever the primary provider defaults to. Falls back to
-    the primary provider only when no Gemini key is configured.
+    Same NARRATIVE_PROVIDER-routed pattern as score_concentration_risk (see
+    that docstring) -- one provider setting governs every LLM call in this
+    file, no per-function carve-outs.
 
     Returns {"sentiment": str, "summary": str, "flagged_themes": [{"theme": str, "evidence": str}, ...]}.
     """
@@ -1001,16 +1004,8 @@ def score_news_sentiment(headlines_text: str, label: str = "news_sentiment") -> 
     )
     messages = [{"role": "user", "content": prompt}]
 
-    if _get_gemini_key():
-        _throttle_provider("gemini")
-        data = _call_and_parse_json_gemini(
-            messages, repair_prompt, label, temperature=_env_float("NARRATIVE_TEMPERATURE", 0.0)
-        )
-        return _parse_news_sentiment_payload(data)
-
     if not _llm_backend_available():
         raise RuntimeError(f"LLM backend unavailable for [{label}]")
-    info(f"GEMINI_API_KEY not set; news sentiment for [{label}] uses primary provider ({_get_provider()})")
     data = _chat_completion_json(messages, label, repair_prompt)
     return _parse_news_sentiment_payload(data)
 

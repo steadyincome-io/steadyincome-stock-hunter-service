@@ -46,6 +46,41 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Every run starts on a fresh ephemeral runner with no disk state from
+      # last time -- restoring last week's artifacts here is what lets
+      # sec_financials_worker.py's "skip already-scored filings" check
+      # actually do anything. Without this, drawdown_analyzer.db is created
+      # empty by the next step every single run, so every row looks new and
+      # the pipeline reprocesses the entire ~285-ticker universe through all
+      # 7 LLM narrative sections every week regardless of that check
+      # (confirmed: this alone was 8-11 hours of Gemini/NIM calls on a clean
+      # run, well past this job's 360-minute timeout). continue-on-error
+      # covers the first-ever run (or any run after 21 consecutive missed
+      # cycles, past the artifacts' retention window) where no prior
+      # artifact exists yet -- the next step creates a fresh DB in that case,
+      # same as before this change.
+      - name: Restore database from previous successful run
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: pipeline.yml
+          workflow_conclusion: success
+          name: drawdown-analyzer-db
+          path: .
+          if_no_artifact_found: warn
+
+      - name: Restore SEC companyfacts cache from previous successful run
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: pipeline.yml
+          workflow_conclusion: success
+          name: sec-companyfacts-cache
+          path: cache/sec_companyfacts
+          if_no_artifact_found: warn
+
       - name: Initialize database schema
         env:
           PYTHONPATH: src
@@ -103,15 +138,20 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: drawdown-analyzer-db-${{ github.run_id }}
+          # Fixed name (no run_id suffix) -- the "Restore database from
+          # previous successful run" step above looks up this exact name to
+          # find the latest one, rather than needing to know a prior run_id.
+          # 21-day retention gives ~3 missed weekly cycles of buffer before
+          # falling back to a full backfill, vs. the job's actual weekly cadence.
+          name: drawdown-analyzer-db
           path: drawdown_analyzer.db
-          retention-days: 14
+          retention-days: 21
 
       - name: Upload SEC companyfacts cache
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: sec-companyfacts-cache-${{ github.run_id }}
+          name: sec-companyfacts-cache
           path: cache/sec_companyfacts
-          retention-days: 14
+          retention-days: 21
           if-no-files-found: ignore

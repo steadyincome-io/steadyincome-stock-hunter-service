@@ -563,7 +563,20 @@ def sync_10k_10q_financials(db_path, days_back=365, reset_financials=False, resu
     # Determine cutoff date
     cutoff_date = _days_back_cutoff(days_back)
 
-    # Select only the latest 10-K per ticker; rows without narrative text will be skipped later.
+    # Select only the latest 10-K per ticker. The completeness check below
+    # used to be resume_llm_only-only, which meant a normal (non-resume) run
+    # re-scored EVERY active ticker's latest 10-K through all 7 LLM sections
+    # every single time, regardless of whether it was already fully scored
+    # last week -- since a 10-K stays each ticker's "latest" for the better
+    # part of a year, this made a routine weekly run functionally identical
+    # to a full-universe backfill (confirmed: ~285 tickers x up to 7 calls
+    # would take 8-11 hours even with zero errors, well past this pipeline's
+    # 360-minute CI timeout). Now that pipeline.yml restores the previous
+    # run's drawdown_analyzer.db before running, already-scored rows persist
+    # across runs, so applying this filter unconditionally means a routine
+    # run only pays for genuinely new/incomplete filings -- reset_financials
+    # or a first-ever run naturally reprocesses everything anyway, since
+    # every row starts out NULL.
     banner("Step 1b/5: LLM narrative scoring pass" + (" (resume mode)" if resume_llm_only else ""))
     query = """
         SELECT rowid, ticker, form_type, filing_date, report_url,
@@ -580,10 +593,6 @@ def sync_10k_10q_financials(db_path, days_back=365, reset_financials=False, resu
                 AND latest.form_type = '10-K'
                 AND latest.filing_date >= ?
           )
-    """
-    params = [cutoff_date, cutoff_date]
-    if resume_llm_only:
-        query += """
           AND (
                 risk_score IS NULL
              OR risk_summary IS NULL
@@ -592,12 +601,12 @@ def sync_10k_10q_financials(db_path, days_back=365, reset_financials=False, resu
              OR full_sentiment IS NULL
              OR comprehensive_summary IS NULL
           )
-        """
+    """
+    params = [cutoff_date, cutoff_date]
     cursor.execute(query, params)
     rows = cursor.fetchall()
     updated = 0
-    if resume_llm_only:
-        info(f"Resume mode selected {len(rows)} incomplete filings for LLM processing")
+    info(f"{len(rows)} filing(s) selected for LLM narrative processing (already-scored filings skipped)")
 
     for row in rows:
         try:
