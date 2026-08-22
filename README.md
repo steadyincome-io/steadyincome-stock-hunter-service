@@ -12,10 +12,8 @@ stock_hunter/
 ├── requirements.txt
 ├── run.sh
 ├── activate_and_run.sh
-├── ui/
-│   ├── __init__.py
-│   ├── app.py
-│   └── db.py
+├── web/
+│   └── app/           # React + Vite dashboard (queries drawdown_analyzer.db client-side)
 ├── src/stock_hunter/
 │   ├── ai_narrative.py
 │   ├── pipeline.py
@@ -51,61 +49,48 @@ pipenv shell
 
 ---
 
-## 📊 Local Streamlit Dashboard
+## 📊 Local Web Dashboard (React + Vite)
 
-The project includes a read-only Streamlit app that reads directly from SQLite.
+The project includes a read-only React dashboard (`web/app/`) built with Vite. It has no
+backend server for data -- it loads `drawdown_analyzer.db` as a static file and queries it
+client-side in the browser via `sql.js` (SQLite compiled to WebAssembly).
 
-Install dependencies first:
-
-```bash
-source venv/bin/activate
-python -m pip install -r requirements.txt
-```
-
-Run the dashboard:
+Install dependencies first (one-time, or after `package.json` changes):
 
 ```bash
-source venv/bin/activate
-streamlit run ui/app.py
+cd web/app && npm install
 ```
 
-Streamlit runs with automatic reload by default, so edits to `ui/app.py` or supporting files will refresh the page while the server is running.
-
-If file watching feels slow or reloads lag, install the optional watchdog package:
+Refresh the snapshot the dashboard reads (copies the current root `drawdown_analyzer.db`
+into `web/app/public/data/`):
 
 ```bash
-source venv/bin/activate
-python -m pip install watchdog
+cp drawdown_analyzer.db web/app/public/data/drawdown_analyzer.db
 ```
 
-Browser URL:
-
-- `http://localhost:8501`
-- If Streamlit chooses a different port, it prints the exact local URL in the terminal when the server starts.
-
-How to check whether Streamlit is already running:
+Start the dashboard:
 
 ```bash
-pgrep -af 'streamlit run ui/app.py|streamlit'
+./scripts/ui_start.sh
 ```
 
-You can also check the port directly:
+This runs `npm run dev` in the background, writes its PID to `.ui.pid`, and logs to
+`.ui.log`. Vite serves at:
+
+- `http://localhost:5173`
+- If 5173 is taken, Vite picks the next free port -- check `.ui.log` for the exact URL.
+
+Stop it (kills the dev server and any child processes so nothing is left dangling):
 
 ```bash
-lsof -i :8501
+./scripts/ui_stop.sh
 ```
 
-If those commands return nothing, the Streamlit server is not running.
+Check whether it's already running:
 
-What it shows:
-
-- summary cards for active tickers, snapshot rows, financial rows, LLM-enriched rows, ETF rows, and pipeline runs
-- ticker search in the sidebar
-- ticker overview charts for price history and filing-score trends
-- filing history and filing detail for each ticker
-- narrative section tabs for MD&A, risk factors, legal, commitments, buybacks, liquidity, and subsequent events
-- recent pipeline run history plus a run-details panel
-- optional auto-refresh while the backend pipeline is running
+```bash
+lsof -i :5173
+```
 
 The dashboard is read-only. It does not write back to the database.
 

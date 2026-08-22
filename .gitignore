@@ -23,6 +23,10 @@ drawdown_analyzer.db.bak
 *.sqlite3
 cache/
 
+# UI dev server pid/log (scripts/ui_start.sh, scripts/ui_stop.sh)
+.ui.pid
+.ui.log
+
 # OS/editor cruft
 .DS_Store
 .vscode/

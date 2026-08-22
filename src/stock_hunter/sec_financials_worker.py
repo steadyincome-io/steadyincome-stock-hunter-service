@@ -1,8 +1,10 @@
 import requests
 import sqlite3
+import threading
 import time
 import json
 import struct
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from .sec_edgar_worker import fetch_sec_cik_mapping
 from .sec_narrative_worker import fetch_narratives_for_filing
 from .logger import banner, step, info, success, warning, error, ticker_start, ticker_done, progress
 from .ai_narrative import (
+    _env_int,
     score_risk_factors,
     summarize_mda,
     sentiment_from_text,
@@ -608,16 +611,54 @@ def sync_10k_10q_financials(db_path, days_back=365, reset_financials=False, resu
     updated = 0
     info(f"{len(rows)} filing(s) selected for LLM narrative processing (already-scored filings skipped)")
 
-    for row in rows:
-        try:
-            if _process_llm_narrative_row(conn, cursor, row):
-                updated += 1
-                if updated % 10 == 0:
-                    info(f"Financial narrative updates processed: {updated}")
-        except Exception as exc:
-            ticker = row[1] if len(row) > 1 else "unknown"
-            error(f"{ticker}: unexpected failure during LLM narrative scoring, skipping this filing: {exc}")
-            conn.rollback()
+    # NARRATIVE_CONCURRENCY controls how many filings' LLM calls run in flight
+    # at once. Default 1 preserves the old fully-sequential behavior. The
+    # actual bottleneck here is per-call model latency (10-35s observed), not
+    # the provider RPS cap (ai_narrative._throttle_provider already keeps total
+    # request rate under quota across threads), so raising this is what
+    # actually cuts wall-clock time -- see the 2026-08-21 6h-timeout incident.
+    concurrency = max(_env_int("NARRATIVE_CONCURRENCY", 1), 1)
+
+    if concurrency <= 1:
+        for row in rows:
+            try:
+                if _process_llm_narrative_row(conn, cursor, row):
+                    updated += 1
+                    if updated % 10 == 0:
+                        info(f"Financial narrative updates processed: {updated}")
+            except Exception as exc:
+                ticker = row[1] if len(row) > 1 else "unknown"
+                error(f"{ticker}: unexpected failure during LLM narrative scoring, skipping this filing: {exc}")
+                conn.rollback()
+    else:
+        info(f"Running LLM narrative pass with concurrency={concurrency}")
+        updated_lock = threading.Lock()
+
+        def _process_row_isolated(row):
+            # sqlite3 connections/cursors are not safe to share across threads,
+            # so each worker opens (and closes) its own connection to the same
+            # file rather than reusing the outer conn/cursor.
+            thread_conn = sqlite3.connect(db_path, timeout=30)
+            thread_conn.execute("PRAGMA busy_timeout = 30000")
+            thread_cursor = thread_conn.cursor()
+            try:
+                return _process_llm_narrative_row(thread_conn, thread_cursor, row)
+            finally:
+                thread_conn.close()
+
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            future_to_row = {executor.submit(_process_row_isolated, row): row for row in rows}
+            for future in as_completed(future_to_row):
+                row = future_to_row[future]
+                ticker = row[1] if len(row) > 1 else "unknown"
+                try:
+                    if future.result():
+                        with updated_lock:
+                            updated += 1
+                            if updated % 10 == 0:
+                                info(f"Financial narrative updates processed: {updated}")
+                except Exception as exc:
+                    error(f"{ticker}: unexpected failure during LLM narrative scoring, skipping this filing: {exc}")
 
     conn.close()
     total_touched = seeded_rows + updated

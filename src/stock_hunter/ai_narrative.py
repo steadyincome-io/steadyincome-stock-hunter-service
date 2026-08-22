@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import threading
 import time
 from typing import Any, Dict, List
 
@@ -420,6 +421,12 @@ def _fallback_bullets(text: str, max_bullets: int, max_chars: int) -> list:
 # side calls -- which would have double-counted Gemini traffic the moment
 # Gemini became both the primary provider and the side-call provider).
 _last_request_time_by_provider: Dict[str, float] = {}
+# Guards read-modify-write access to _last_request_time_by_provider now that
+# narrative processing can run multiple filings concurrently (NARRATIVE_CONCURRENCY):
+# without this lock, two threads could both read the same stale `last` value and
+# both proceed without sleeping, silently doubling the effective request rate
+# past the provider's real quota.
+_throttle_lock = threading.Lock()
 
 
 def _throttle_provider(provider: str):
@@ -427,11 +434,18 @@ def _throttle_provider(provider: str):
     min_interval = _get_min_interval_sec(provider)
     if min_interval <= 0:
         return
-    last = _last_request_time_by_provider.get(provider, 0.0)
-    elapsed = time.time() - last
-    if elapsed < min_interval:
-        time.sleep(min_interval - elapsed)
-    _last_request_time_by_provider[provider] = time.time()
+    with _throttle_lock:
+        last = _last_request_time_by_provider.get(provider, 0.0)
+        now = time.time()
+        elapsed = now - last
+        wait = min_interval - elapsed
+        # Reserve this slot immediately (before sleeping) so a concurrent thread
+        # that acquires the lock next sees this call's reserved time, not the
+        # previous one -- otherwise multiple threads waiting on the same stale
+        # `last` would all wake up at once instead of being spaced out.
+        _last_request_time_by_provider[provider] = now + max(wait, 0.0)
+    if wait > 0:
+        time.sleep(wait)
 
 def _prompt_from_messages(messages: List[Dict[str, Any]]) -> str:
     parts = []
