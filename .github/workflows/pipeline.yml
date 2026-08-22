@@ -103,6 +103,11 @@ jobs:
           NARRATIVE_TEMPERATURE: ${{ secrets.NARRATIVE_TEMPERATURE }}
           NARRATIVE_MAX_TOKENS: ${{ secrets.NARRATIVE_MAX_TOKENS }}
           NARRATIVE_MAX_RPS: ${{ secrets.NARRATIVE_MAX_RPS }}
+          # How many filings' LLM calls run concurrently in Step 1b. Safe to
+          # leave this line in even before the secret exists -- _env_int()
+          # falls back to its default (1) on any parse failure, including the
+          # empty string GitHub substitutes for an unset secret.
+          NARRATIVE_CONCURRENCY: ${{ secrets.NARRATIVE_CONCURRENCY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           COHERE_API_BASE: ${{ secrets.COHERE_API_BASE }}
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
