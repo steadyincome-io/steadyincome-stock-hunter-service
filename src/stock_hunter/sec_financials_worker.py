@@ -330,6 +330,18 @@ def fetch_10k_10q_filings(ticker, cik_str, days_back=365):
     try:
         resp = rate_limited_get(url, headers=HEADERS, timeout=10)
         if resp.status_code != 200:
+            # Without this, a non-200 (e.g. SEC rate-limiting/blocking the CI
+            # runner's IP) was silently treated as "this ticker has no recent
+            # filing" -- identical to a genuine empty result -- so a run could
+            # silently fail to sync most of the universe while still logging
+            # a clean-looking "no recent 10-K / 10-Q filings found" for every
+            # affected ticker (confirmed live: NVDA logged that message on a
+            # run where it actually has a 2026-05-20 10-Q well inside the
+            # cutoff window).
+            warning(
+                f"{ticker}: SEC submissions request failed (HTTP {resp.status_code}), "
+                f"treating as no filings this run -- body: {resp.text[:200]!r}"
+            )
             return []
 
         data = resp.json()
