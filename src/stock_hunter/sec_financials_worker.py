@@ -16,6 +16,8 @@ from .sec_narrative_worker import fetch_narratives_for_filing
 from .logger import banner, step, info, success, warning, error, ticker_start, ticker_done, progress
 from .ai_narrative import (
     _env_int,
+    _get_gemini_model_secondary,
+    set_gemini_model_override,
     score_risk_factors,
     summarize_mda,
     sentiment_from_text,
@@ -645,8 +647,24 @@ def sync_10k_10q_financials(db_path, days_back=365, reset_financials=False, resu
     else:
         info(f"Running LLM narrative pass with concurrency={concurrency}")
         updated_lock = threading.Lock()
+        secondary_model = _get_gemini_model_secondary()
+        if secondary_model:
+            info(f"Splitting Gemini load across primary and secondary model ({secondary_model})")
 
-        def _process_row_isolated(row):
+        def _process_row_isolated(row, row_index):
+            # Round-robin filings across the two Gemini models so their
+            # separately-tracked quota (RPM/TPM/RPD) buckets share the load
+            # instead of concurrency=N piling every call onto one model's
+            # single TPM budget. No-op (always primary) if
+            # GEMINI_MODEL_SECONDARY isn't configured. Set unconditionally
+            # (including None to clear) since ThreadPoolExecutor reuses worker
+            # threads across tasks -- a stale override from a previous task on
+            # this same thread must not leak into this one.
+            if secondary_model and row_index % 2 == 1:
+                set_gemini_model_override(secondary_model)
+            else:
+                set_gemini_model_override(None)
+
             # sqlite3 connections/cursors are not safe to share across threads,
             # so each worker opens (and closes) its own connection to the same
             # file rather than reusing the outer conn/cursor.
@@ -659,7 +677,10 @@ def sync_10k_10q_financials(db_path, days_back=365, reset_financials=False, resu
                 thread_conn.close()
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            future_to_row = {executor.submit(_process_row_isolated, row): row for row in rows}
+            future_to_row = {
+                executor.submit(_process_row_isolated, row, index): row
+                for index, row in enumerate(rows)
+            }
             for future in as_completed(future_to_row):
                 row = future_to_row[future]
                 ticker = row[1] if len(row) > 1 else "unknown"

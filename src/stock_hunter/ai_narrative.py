@@ -145,8 +145,28 @@ def _get_gemini_key() -> str:
     return os.getenv("GEMINI_API_KEY", "")
 
 
+# Thread-local model override, set by set_gemini_model_override() at the start
+# of each concurrent worker's task (see sec_financials_worker.py's round-robin
+# assignment across GEMINI_MODEL / GEMINI_MODEL_SECONDARY) so calls made within
+# that thread's task use the assigned model without threading a `model` param
+# through every score_*/summarize_* call site.
+_gemini_model_override = threading.local()
+
+
+def set_gemini_model_override(model: str | None) -> None:
+    _gemini_model_override.value = model
+
+
+def _get_gemini_model_secondary() -> str:
+    _ensure_env_loaded()
+    return os.getenv("GEMINI_MODEL_SECONDARY") or ""
+
+
 def _get_gemini_model() -> str:
     _ensure_env_loaded()
+    override = getattr(_gemini_model_override, "value", None)
+    if override:
+        return override
     # `or` rather than the getenv(name, default) form -- GitHub Actions substitutes
     # an empty string for a declared-but-unset secret, and that empty value would
     # otherwise win over the default (this exact pattern broke NVIDIA_NIM_MODEL once).
@@ -420,7 +440,13 @@ def _fallback_bullets(text: str, max_bullets: int, max_chars: int) -> list:
 # NARRATIVE_PROVIDER was, and a per-provider one only used for the Gemini
 # side calls -- which would have double-counted Gemini traffic the moment
 # Gemini became both the primary provider and the side-call provider).
-_last_request_time_by_provider: Dict[str, float] = {}
+# Keyed by (provider, model) rather than just provider -- GEMINI_MODEL_SECONDARY
+# lets concurrent workers round-robin across two Gemini models that carry
+# separate quota buckets (confirmed: gemma-4-26b-it has the same 30 RPM/16K TPM/
+# 14.4K RPD limits as gemma-4-31b-it, but tracked independently), so each model
+# needs its own clock instead of sharing one -- keying by provider alone would
+# have throttled the secondary model against the primary's traffic for no reason.
+_last_request_time_by_provider: Dict[tuple, float] = {}
 # Guards read-modify-write access to _last_request_time_by_provider now that
 # narrative processing can run multiple filings concurrently (NARRATIVE_CONCURRENCY):
 # without this lock, two threads could both read the same stale `last` value and
@@ -434,8 +460,9 @@ def _throttle_provider(provider: str):
     min_interval = _get_min_interval_sec(provider)
     if min_interval <= 0:
         return
+    throttle_key = (provider, _get_model(provider))
     with _throttle_lock:
-        last = _last_request_time_by_provider.get(provider, 0.0)
+        last = _last_request_time_by_provider.get(throttle_key, 0.0)
         now = time.time()
         elapsed = now - last
         wait = min_interval - elapsed
@@ -443,7 +470,7 @@ def _throttle_provider(provider: str):
         # that acquires the lock next sees this call's reserved time, not the
         # previous one -- otherwise multiple threads waiting on the same stale
         # `last` would all wake up at once instead of being spaced out.
-        _last_request_time_by_provider[provider] = now + max(wait, 0.0)
+        _last_request_time_by_provider[throttle_key] = now + max(wait, 0.0)
     if wait > 0:
         time.sleep(wait)
 

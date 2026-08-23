@@ -632,7 +632,16 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                 ev_ebitda = sec_valuation.get('ev_ebitda') or float(stock_info.get('enterpriseToEbitda', 18.0) or 18.0)
                 div_yield = sec_valuation.get('div_yield_pct')
                 if div_yield is None:
-                    div_yield = round(float(stock_info.get('dividendYield', 0.012) or 0.012) * 100, 2)
+                    # yfinance's `dividendYield` field is already expressed as a
+                    # percent (e.g. 1.01 means 1.01%), not a 0-1 fraction --
+                    # confirmed live against yfinance 1.5.2 across SPY (1.01),
+                    # AAPL (0.35), KO (2.33), JNJ (1.98), MSFT (0.75), all of
+                    # which match their real-world yields directly with no
+                    # scaling. The old `* 100` here assumed the pre-change
+                    # fraction format and was inflating every ETF/stock that
+                    # fell through to this fallback by 100x (SPY showed up as
+                    # a 101% dividend yield).
+                    div_yield = round(float(stock_info.get('dividendYield') or 1.2), 2)
                 fcf_yield_pct = sec_valuation.get('fcf_yield_pct')
                 if fcf_yield_pct is None:
                     fcf_yield_pct = _fundamental_fcf_yield(stock_info)
@@ -756,6 +765,21 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                     insider_sentiment_score=insider_score if asset_type == 'Stock' else None,
                     eightk_flags=eightk_flags,
                 )
+
+                # ETFs get almost none of compute_risk_score's real inputs above
+                # (no 10-K, no insider trades, no 8-Ks -- everything defaults to
+                # a neutral 50), so it's otherwise just the drawdown-severity
+                # term wearing a "risk score" label. cash_percentage (from
+                # N-PORT's cshNotRptdInCorD, fixed 2026-08-23 -- it was always
+                # 0.0 before due to a wrong XML tag) is real fund data: more
+                # cash cushion means less forced-selling/liquidity risk if the
+                # fund needs to meet redemptions. Deliberately small and
+                # bounded -- index ETFs typically hold well under 5% cash, so
+                # this nudges the score rather than dominating it.
+                if asset_type == 'ETF' and etf_metrics:
+                    cash_pct = etf_metrics.get('cash_percentage')
+                    if cash_pct:
+                        risk_score = max(0, min(100, round(risk_score - min(cash_pct * 2, 10))))
 
                 dividend_score = max(0, min(100, int(round(20 + div_yield * 15)))) if div_yield else 30
 

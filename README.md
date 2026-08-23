@@ -51,14 +51,18 @@ pipenv shell
 
 ## 📊 Local Web Dashboard (React + Vite)
 
-The project includes a read-only React dashboard (`web/app/`) built with Vite. It has no
-backend server for data -- it loads `drawdown_analyzer.db` as a static file and queries it
-client-side in the browser via `sql.js` (SQLite compiled to WebAssembly).
+The project includes a read-only React dashboard (`web/app/`) built with Vite. For most
+data it has no backend -- it loads `drawdown_analyzer.db` as a static file and queries it
+client-side in the browser via `sql.js` (SQLite compiled to WebAssembly). The one
+exception is the per-ticker Options Chain view, which calls a small local Flask API
+(`src/stock_hunter/options_api.py`) that holds the Alpaca credentials server-side --
+see that module's docstring for why this can't just be a browser-side fetch.
 
-Install dependencies first (one-time, or after `package.json` changes):
+Install dependencies first (one-time, or after `package.json`/`requirements.txt` changes):
 
 ```bash
 cd web/app && npm install
+cd .. && pip install -r requirements.txt
 ```
 
 Refresh the snapshot the dashboard reads (copies the current root `drawdown_analyzer.db`
@@ -68,28 +72,30 @@ into `web/app/public/data/`):
 cp drawdown_analyzer.db web/app/public/data/drawdown_analyzer.db
 ```
 
-Start the dashboard:
+Start both the options API and the UI dev server:
 
 ```bash
-./scripts/ui_start.sh
+./scripts/dev_start.sh
 ```
 
-This runs `npm run dev` in the background, writes its PID to `.ui.pid`, and logs to
-`.ui.log`. Vite serves at:
+This backgrounds both processes -- options API PID/logs at `.api.pid`/`.api.log`, Vite's
+at `.ui.pid`/`.ui.log` (all at repo root) -- and is safe to re-run; a service that's
+already up is left alone. URLs:
 
-- `http://localhost:5173`
-- If 5173 is taken, Vite picks the next free port -- check `.ui.log` for the exact URL.
+- UI: `http://localhost:5173`
+- Options API: `http://localhost:8787` (only called internally by the UI, no need to open it directly)
 
-Stop it (kills the dev server and any child processes so nothing is left dangling):
+Stop both (kills each dev server and any leftover process on its port, so nothing is left dangling):
 
 ```bash
-./scripts/ui_stop.sh
+./scripts/dev_stop.sh
 ```
 
-Check whether it's already running:
+Check whether they're already running:
 
 ```bash
-lsof -i :5173
+lsof -i :5173   # UI
+lsof -i :8787   # options API
 ```
 
 The dashboard is read-only. It does not write back to the database.

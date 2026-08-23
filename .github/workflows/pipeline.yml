@@ -123,6 +123,11 @@ jobs:
           # reasoning trace before the real JSON answer.
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          # Optional second model with its own separate RPM/TPM/RPD quota bucket
+          # (confirmed same limits as GEMINI_MODEL on this account). When set,
+          # concurrent narrative workers round-robin filings across both models
+          # instead of piling every concurrent call onto one model's TPM budget.
+          GEMINI_MODEL_SECONDARY: ${{ secrets.GEMINI_MODEL_SECONDARY }}
           GEMINI_API_BASE: ${{ secrets.GEMINI_API_BASE }}
           GEMINI_MAX_RPS: ${{ secrets.GEMINI_MAX_RPS }}
           GEMINI_MAX_TOKENS: ${{ secrets.GEMINI_MAX_TOKENS }}

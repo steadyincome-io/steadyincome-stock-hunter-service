@@ -27,6 +27,10 @@ cache/
 .ui.pid
 .ui.log
 
+# Options API dev server pid/log (scripts/api_start.sh, scripts/api_stop.sh)
+.api.pid
+.api.log
+
 # OS/editor cruft
 .DS_Store
 .vscode/

@@ -96,8 +96,10 @@ def _extract_nport_with_bs4(xml_text):
                 value = elem.get_text(strip=True)
         metrics[metric_name] = _clean_number(value)
 
+    # See the strict-parser path (parse_nport_xml) for why this reads
+    # `cshNotRptdInCorD` rather than the nonexistent `assetsAmtCash`.
     cash_assets = 0.0
-    cash_elem = _bs4_find_first(soup, "assetsAmtCash")
+    cash_elem = _bs4_find_first(soup, "cshNotRptdInCorD")
     if cash_elem is not None:
         cash_assets = _clean_number(cash_elem.get_text(strip=True))
     metrics["cash_percentage"] = (
@@ -344,18 +346,24 @@ def parse_nport_xml(xml_text):
             else:
                 metrics[metric_name] = 0.0
     
-    # Calculate cash percentage if we have the components
+    # Calculate cash percentage if we have the components.
+    # `assetsAmtCash` (the tag this originally looked for) does not exist
+    # anywhere in real N-PORT filings -- confirmed against SPY's and QQQ's
+    # actual XML. Cash held by an equity ETF isn't reported as an individual
+    # holding line either (every holding in SPY's filing is assetCat=EC);
+    # it's the fund-level `cshNotRptdInCorD` field under fundInfo ("cash not
+    # reported in Parts C or D" -- i.e. cash/equivalents not itemized as a
+    # security). This was silently always 0.0 before, for every ETF ever
+    # ingested.
     if 'total_assets' in metrics and metrics['total_assets'] > 0:
-        # Look for cash assets
         cash_assets = 0.0
-        # Try to find cash position
-        cash_elem = root.find('.//n:assetsAmtCash', ns)
+        cash_elem = root.find('.//n:cshNotRptdInCorD', ns)
         if cash_elem is not None and cash_elem.text:
             try:
                 cash_assets = float(cash_elem.text)
             except ValueError:
                 pass
-        
+
         if cash_assets > 0:
             metrics['cash_percentage'] = (cash_assets / metrics['total_assets']) * 100
         else:
