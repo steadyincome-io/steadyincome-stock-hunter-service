@@ -1,286 +1,356 @@
 ticker,name,asset_type,sector,industry,market_cap
-NVDA,NVIDIA Corporation,Stock,Technology,Semiconductors,5453.6
-AAPL,Apple Inc.,Stock,Technology,Consumer Electronics,4464.8
-GOOGL,Alphabet Inc.,Stock,Communication Services,Internet Content & Information,4230.3
-GOOG,Alphabet Inc.,Stock,Communication Services,Internet Content & Information,4201.5
-MSFT,Microsoft Corporation,Stock,Technology,Software - Infrastructure,3678.6
-AMZN,"Amazon.com, Inc.",Stock,Consumer Cyclical,Internet Retail,2833.0
+NVDA,NVIDIA Corporation - Common Stock,Stock,,,5200.7
+AAPL,Apple Inc.,Stock,Technology,Consumer Electronics,4514.7
+GOOGL,Alphabet Inc. - Class A Common Stock,Stock,,,4217.1
+GOOG,Alphabet Inc. - Class C Capital Stock,Stock,,,4179.6
+MSFT,Microsoft Corporation - Common Stock,Stock,,,3588.3
+AMZN,"Amazon.com, Inc.",Stock,Consumer Cyclical,Internet Retail,2789.7
 VTI,Vanguard Morningstar Total Stock Market ETF,ETF,ETF,,2290.0
-AVGO,Broadcom Inc.,Stock,Technology,Semiconductors,1869.7
-SPCX,Space Exploration Technologies Corp.,Stock,Industrials,Aerospace & Defense,1845.4
+SPCX,Space Exploration Technologies Corp. - Class A Common Stock,Stock,,,1805.5
+AVGO,Broadcom Inc.,Stock,Technology,Semiconductors,1752.9
 VOO,Vanguard S&P 500 ETF,ETF,ETF,,1686.9
-META,"Meta Platforms, Inc.",Stock,Communication Services,Internet Content & Information,1502.6
-TSLA,"Tesla, Inc.",Stock,Consumer Cyclical,Auto Manufacturers,1351.8
-MU,"Micron Technology, Inc.",Stock,Technology,Semiconductors,1097.4
-BRK.B,Berkshire Hathaway Inc.,Stock,Financial Services,Insurance - Diversified,1079.0
-BRK.A,Berkshire Hathaway Inc.,Stock,Financial Services,Insurance - Diversified,1078.3
-LLY,Eli Lilly and Company,Stock,Healthcare,Drug Manufacturers - General,1052.4
-JPM,JP Morgan Chase & Co.,Stock,Financial Services,Banks - Diversified,964.5
-WMT,Walmart Inc.,Stock,Consumer Defensive,Discount Stores,917.3
+TSLA,"Tesla, Inc.  - Common Stock",Stock,,,1433.1
+META,"Meta Platforms, Inc. - Class A Common Stock",Stock,,,1400.9
+SKHY,SK hynix Inc. - American Depositary Shares,Stock,,,1160.0
+LLY,Eli Lilly and Company Common Stock,Stock,,,1119.5
+MU,"Micron Technology, Inc. - Common Stock",Stock,,,1091.9
+BRK.B,Berkshire Hathaway Inc. New Common Stock,Stock,,,1061.4
+BRK.A,Berkshire Hathaway Inc. Common Stock,Stock,,,1061.1
+JPM,JP Morgan Chase & Co. Common Stock,Stock,,,934.6
 IVV,iShares Core S&P 500 ETF,ETF,ETF,,869.2
-AMD,"Advanced Micro Devices, Inc.",Stock,Technology,Semiconductors,839.7
 SPY,State Street SPDR S&P 500 ETF Trust,ETF,ETF,,795.3
-V,Visa Inc.,Stock,Financial Services,Credit Services,679.9
-XOM,ExxonMobil Holdings Corporation,Stock,Energy,Oil & Gas Integrated,658.3
+AMD,"Advanced Micro Devices, Inc.",Stock,Technology,Semiconductors,772.6
+V,Visa Inc.,Stock,,,692.7
+XOM,ExxonMobil Holdings Corporation Common Stock,Stock,,,678.9
 VXUS,Vanguard Total International Stock ETF,ETF,ETF,,645.8
-JNJ,Johnson & Johnson,Stock,Healthcare,Drug Manufacturers - General,627.4
-INTC,Intel Corporation,Stock,Technology,Semiconductors,538.6
-MA,Mastercard Incorporated,Stock,Financial Services,Credit Services,498.7
+INTC,Intel Corporation - Common Stock,Stock,,,473.3
+ABBV,AbbVie Inc. Common Stock,Stock,,,468.2
 QQQ,"Invesco QQQ Trust, Series 1",ETF,ETF,,452.8
-BAC,Bank of America Corporation,Stock,Financial Services,Banks - Diversified,451.0
-ABBV,AbbVie Inc.,Stock,Healthcare,Drug Manufacturers - General,440.8
-CSCO,"Cisco Systems, Inc.",Stock,Technology,Communication Equipment,440.2
-ORCL,Oracle Corporation,Stock,Technology,Software - Infrastructure,433.6
-COST,Costco Wholesale Corporation,Stock,Consumer Defensive,Discount Stores,426.2
-PLTR,Palantir Technologies Inc.,Stock,Technology,Software - Infrastructure,418.2
-LRCX,Lam Research Corporation,Stock,Technology,Semiconductor Equipment & Materials,415.9
-AMAT,"Applied Materials, Inc.",Stock,Technology,Semiconductor Equipment & Materials,402.7
+CSCO,"Cisco Systems, Inc.",Stock,Technology,Communication Equipment,437.7
+PLTR,Palantir Technologies Inc. - Class A Common Stock,Stock,,,432.4
+BAC,Bank of America Corporation Common Stock,Stock,,,431.4
+ORCL,Oracle Corporation Common Stock,Stock,,,421.9
+COST,Costco Wholesale Corporation,Stock,Consumer Defensive,Discount Stores,420.3
+CVX,Chevron Corporation Common Stock,Stock,,,402.7
 BND,Vanguard Total Bond Market ETF,ETF,ETF,,396.7
-CAT,"Caterpillar, Inc.",Stock,Industrials,Farm & Heavy Construction Machinery,393.7
-CVX,Chevron Corporation,Stock,Energy,Oil & Gas Integrated,392.3
-GE,GE Aerospace,Stock,Industrials,Aerospace & Defense,382.2
-KO,Coca-Cola Company (The),Stock,Consumer Defensive,Beverages - Non-Alcoholic,377.4
+LRCX,Lam Research Corporation - Common Stock,Stock,,,392.9
+KO,Coca-Cola Company (The) Common Stock,Stock,,,392.0
+AMAT,"Applied Materials, Inc.",Stock,Technology,Semiconductor Equipment & Materials,390.9
+CAT,"Caterpillar, Inc. Common Stock",Stock,,,380.6
+MRK,"Merck & Company, Inc. Common Stock (new)",Stock,,,376.4
 VUG,Vanguard Morningstar Growth ETF,ETF,ETF,,372.0
-UNH,UnitedHealth Group Incorporated,Stock,Healthcare,Healthcare Plans,360.6
-MS,Morgan Stanley,Stock,Financial Services,Capital Markets,341.7
-HD,"Home Depot, Inc. (The)",Stock,Consumer Cyclical,Home Improvement Retail,337.9
-PG,Procter & Gamble Company (The),Stock,Consumer Defensive,Household & Personal Products,336.0
-MRK,"Merck & Company, Inc.",Stock,Healthcare,Drug Manufacturers - General,335.1
-NFLX,"Netflix, Inc.",Stock,Communication Services,Entertainment,325.5
-DELL,Dell Technologies Inc.,Stock,Technology,Computer Hardware,317.1
+GE,GE Aerospace Common Stock,Stock,,,361.5
+HSBC,"HSBC Holdings, plc. Common Stock",Stock,,,357.0
+UNH,UnitedHealth Group Incorporated Common Stock (DE),Stock,,,350.2
+MS,Morgan Stanley Common Stock,Stock,,,336.4
+PG,Procter & Gamble Company (The) Common Stock,Stock,,,336.3
+HD,"Home Depot, Inc. (The) Common Stock",Stock,,,334.6
+NFLX,"Netflix, Inc. - Common Stock",Stock,,,331.4
 VEA,Vanguard FTSE Developed Markets ETF,ETF,ETF,,314.9
-PANW,"Palo Alto Networks, Inc.",Stock,Technology,Software - Infrastructure,313.2
-GS,"Goldman Sachs Group, Inc. (The)",Stock,Financial Services,Capital Markets,302.6
-RTX,RTX Corporation,Stock,Industrials,Aerospace & Defense,300.5
-PM,Philip Morris International Inc,Stock,Consumer Defensive,Tobacco,296.7
-GEV,GE Vernova Inc.,Stock,Industrials,Specialty Industrial Machinery,283.2
-WFC,Wells Fargo & Company,Stock,Financial Services,Banks - Diversified,268.6
-KLAC,KLA Corporation,Stock,Technology,Semiconductor Equipment & Materials,266.2
+GS,"Goldman Sachs Group, Inc. (The) Common Stock",Stock,,,302.6
+NVS,Novartis AG Common Stock,Stock,,,301.9
+PM,Philip Morris International Inc Common Stock,Stock,,,293.4
+PANW,"Palo Alto Networks, Inc. - Common Stock",Stock,,,291.7
+BABA,Alibaba Group Holding Limited American Depositary Shares each representing eight Ordinary share,Stock,,,286.0
+DELL,Dell Technologies Inc. Class C Common Stock ,Stock,,,285.6
+RY,Royal Bank Of Canada Common Stock,Stock,,,285.2
+RTX,RTX Corporation Common Stock,Stock,,,282.9
+SHEL,Shell PLC American Depositary Shares (each representing two (2) Ordinary Shares) ,Stock,,,257.5
+AZN,AstraZeneca PLC Ordinary Shares,Stock,,,257.4
 VTV,Vanguard Morningstar Value ETF,ETF,ETF,,256.4
-TXN,Texas Instruments Incorporated,Stock,Technology,Semiconductors,255.3
-ANET,"Arista Networks, Inc.",Stock,Technology,Computer Hardware,250.8
-SNDK,Sandisk Corporation,Stock,Technology,Computer Hardware,243.0
-C,Citigroup Inc.,Stock,Financial Services,Banks - Diversified,233.7
-AXP,American Express Company,Stock,Financial Services,Credit Services,231.3
+GEV,GE Vernova Inc. Common Stock,Stock,,,254.8
+WFC,Wells Fargo & Company Common Stock,Stock,,,253.5
+MUFG,"Mitsubishi UFJ Financial Group, Inc. Common Stock",Stock,,,248.5
+BHP,BHP Group Limited American Depositary Shares (Each representing two Ordinary Shares),Stock,,,246.5
+TXN,Texas Instruments Incorporated - Common Stock,Stock,,,241.4
+KLAC,KLA Corporation  - Common Stock,Stock,,,240.4
+ANET,"Arista Networks, Inc. Common Stock",Stock,,,237.9
+AMGN,Amgen Inc.,Stock,Healthcare,Drug Manufacturers - General,237.5
+SNDK,Sandisk Corporation - Common Stock When-Issued,Stock,,,233.7
+TM,Toyota Motor Corporation Common Stock,Stock,,,233.7
+TMO,Thermo Fisher Scientific Inc Common Stock,Stock,,,232.7
+AXP,American Express Company Common Stock,Stock,,,226.9
+LIN,Linde plc - Ordinary Shares,Stock,,,224.8
 VO,Vanguard Morningstar Mid-Cap ETF,ETF,ETF,,224.7
-AMGN,Amgen Inc.,Stock,Healthcare,Drug Manufacturers - General,224.6
-CRWD,"CrowdStrike Holdings, Inc.",Stock,Technology,Software - Infrastructure,220.9
-IBM,International Business Machines Corporation,Stock,Technology,Information Technology Services,220.8
-TMO,Thermo Fisher Scientific Inc,Stock,Healthcare,Diagnostics & Research,217.5
-APH,Amphenol Corporation,Stock,Technology,Electronic Components,206.0
-VZ,Verizon Communications Inc.,Stock,Communication Services,Telecom Services,201.4
-MRVL,"Marvell Technology, Inc.",Stock,Technology,Semiconductors,199.3
-TMUS,"T-Mobile US, Inc.",Stock,Communication Services,Telecom Services,195.9
-MCD,McDonald's Corporation,Stock,Consumer Cyclical,Restaurants,193.1
-PEP,"PepsiCo, Inc.",Stock,Consumer Defensive,Beverages - Non-Alcoholic,192.2
-SCHW,The Charles Schwab Corporation,Stock,Financial Services,Capital Markets,192.1
+IBM,International Business Machines Corporation Common Stock,Stock,,,222.0
+MRVL,"Marvell Technology, Inc. - Common Stock",Stock,,,212.8
+NVO,Novo Nordisk A/S Common Stock,Stock,,,206.7
+ABT,Abbott Laboratories Common Stock,Stock,,,201.8
+TTE,TotalEnergies SE Ordinary Shares,Stock,,,199.3
+TMUS,"T-Mobile US, Inc. - Common Stock",Stock,,,196.3
+PEP,"PepsiCo, Inc. - Common Stock",Stock,,,195.8
+CRWD,"CrowdStrike Holdings, Inc.",Stock,Technology,Software - Infrastructure,195.5
+SCHW,Charles Schwab Corporation (The) Common Stock,Stock,,,194.2
+APH,Amphenol Corporation Common Stock,Stock,,,193.6
+TD,Toronto Dominion Bank (The) Common Stock,Stock,,,193.5
+STX,Seagate Technology Holdings PLC - Ordinary Shares (Ireland),Stock,,,192.6
+MCD,McDonald's Corporation Common Stock,Stock,,,191.7
 IEFA,iShares Core MSCI EAFE ETF,ETF,ETF,,190.1
-ADI,"Analog Devices, Inc.",Stock,Technology,Semiconductors,189.7
-DIS,Walt Disney Company (The),Stock,Communication Services,Entertainment,184.5
+DIS,Walt Disney Company (The) Common Stock,Stock,,,186.1
 VB,Vanguard Morningstar Small-Cap ETF,ETF,ETF,,183.4
-BA,The Boeing Company,Stock,Industrials,Aerospace & Defense,183.1
-BLK,"BlackRock, Inc.",Stock,Financial Services,Asset Management,181.8
-NEE,"NextEra Energy, Inc.",Stock,Utilities,Utilities - Regulated Electric,179.8
-WDC,Western Digital Corporation,Stock,Technology,Computer Hardware,175.4
-UNP,Union Pacific Corporation,Stock,Industrials,Railroads,174.5
-QCOM,QUALCOMM Incorporated,Stock,Technology,Semiconductors,174.1
-GILD,"Gilead Sciences, Inc.",Stock,Healthcare,Drug Manufacturers - General,171.6
-T,AT&T Inc.,Stock,Communication Services,Telecom Services,170.6
-WELL,Welltower Inc.,Stock,Real Estate,REIT - Healthcare Facilities,169.7
-TJX,"The TJX Companies, Inc.",Stock,Consumer Cyclical,Apparel Retail,168.0
-DE,Deere & Company,Stock,Industrials,Farm & Heavy Construction Machinery,164.4
-VWO,Vanguard FTSE Emerging Markets ETF,ETF,ETF,,162.0
+UNP,Union Pacific Corporation Common Stock,Stock,,,183.0
+SCCO,Southern Copper Corporation Common Stock,Stock,,,182.4
+ADI,"Analog Devices, Inc.",Stock,Technology,Semiconductors,181.7
+GILD,"Gilead Sciences, Inc. - Common Stock",Stock,,,181.2
+BLK,"BlackRock, Inc. Common Stock",Stock,,,179.1
+DE,Deere & Company Common Stock,Stock,,,174.8
+NEE,"NextEra Energy, Inc. Common Stock",Stock,,,174.5
+T,AT&T Inc.,Stock,,,173.3
+WELL,Welltower Inc. Common Stock,Stock,,,172.4
+RIO,Rio Tinto Plc Common Stock,Stock,,,171.3
+BA,Boeing Company (The) Common Stock,Stock,,,169.3
+WDC,Western Digital Corporation - Common Stock,Stock,,,165.6
+COP,ConocoPhillips Common Stock,Stock,,,164.3
+UBS,UBS Group AG Registered Ordinary Shares,Stock,,,163.2
+ETN,"Eaton Corporation, PLC Ordinary Shares",Stock,,,162.8
+UBER,"Uber Technologies, Inc. Common Stock",Stock,,,161.0
 VGT,Vanguard Information Tech ETF,ETF,ETF,,160.6
-BKNG,Booking Holdings Inc.,Stock,Consumer Cyclical,Travel Services,159.3
-SCCO,Southern Copper Corporation,Stock,Basic Materials,Copper,155.9
-UBER,"Uber Technologies, Inc.",Stock,Technology,Software - Application,155.1
-COP,ConocoPhillips,Stock,Energy,Oil & Gas E&P,154.5
-PFE,"Pfizer, Inc.",Stock,Healthcare,Drug Manufacturers - General,152.7
+BBVA,Banco Bilbao Vizcaya Argentaria S.A. Common Stock,Stock,,,160.3
+PFE,"Pfizer, Inc. Common Stock",Stock,,,160.0
+SMFG,Sumitomo Mitsui Financial Group Inc Unsponsored American Depositary Shares (Japan),Stock,,,159.2
+BKNG,Booking Holdings Inc.,Stock,Consumer Cyclical,Travel Services,157.5
+BUD,Anheuser-Busch Inbev SA Sponsored ADR (Belgium),Stock,,,155.4
+TJX,"TJX Companies, Inc. (The) Common Stock",Stock,,,155.2
+DHR,Danaher Corporation Common Stock,Stock,,,153.8
 IEMG,iShares Core MSCI Emerging Markets ETF,ETF,ETF,,152.2
-GLW,Corning Incorporated,Stock,Technology,Electronic Components,143.0
-DHR,Danaher Corporation,Stock,Healthcare,Diagnostics & Research,142.3
-ISRG,"Intuitive Surgical, Inc.",Stock,Healthcare,Medical Instruments & Supplies,141.3
-LMT,Lockheed Martin Corporation,Stock,Industrials,Aerospace & Defense,140.5
-COF,Capital One Financial Corporation,Stock,Financial Services,Credit Services,139.5
+SONY,Sony Group Corporation American Depositary Shares ,Stock,,,140.0
+VRTX,Vertex Pharmaceuticals Incorporated - Common Stock,Stock,,,138.9
+NEM,Newmont Corporation,Stock,,,138.6
+UL,Unilever PLC American Depositary Shares (each representing One Ordinary Share),Stock,,,138.1
 AGG,iShares Core U.S. Aggregate Bond ETF,ETF,ETF,,137.1
-PLD,"Prologis, Inc.",Stock,Real Estate,REIT - Industrial,134.0
-PH,Parker-Hannifin Corporation,Stock,Industrials,Specialty Industrial Machinery,133.1
+BMY,Bristol-Myers Squibb Company Common Stock,Stock,,,136.9
+ISRG,"Intuitive Surgical, Inc. - Common Stock",Stock,,,135.7
+PLD,"Prologis, Inc. Common Stock",Stock,,,134.8
+COF,Capital One Financial Corporation Common Stock,Stock,,,133.7
+NOW,"ServiceNow, Inc. Common Stock",Stock,,,132.8
+CB,Chubb Limited  Common Stock,Stock,,,131.6
 VIG,Vanguard Div Appreciation ETF,ETF,ETF,,130.9
-BMY,Bristol-Myers Squibb Company,Stock,Healthcare,Drug Manufacturers - General,130.4
 GLD,SPDR Gold Shares,ETF,ETF,,130.3
-SYK,Stryker Corporation,Stock,Healthcare,Medical Devices,130.1
-VRTX,Vertex Pharmaceuticals Incorporated,Stock,Healthcare,Biotechnology,128.2
-NOW,"ServiceNow, Inc.",Stock,Technology,Software - Application,128.2
-CVS,CVS Health Corporation,Stock,Healthcare,Healthcare Plans,124.3
-NEM,Newmont Corporation,Stock,Basic Materials,Gold,124.1
-SPGI,S&P Global Inc.,Stock,Financial Services,Financial Data & Stock Exchanges,123.5
-SBUX,Starbucks Corporation,Stock,Consumer Cyclical,Restaurants,122.8
+LMT,Lockheed Martin Corporation Common Stock,Stock,,,130.1
+GLW,Corning Incorporated Common Stock,Stock,,,129.1
+PGR,Progressive Corporation (The) Common Stock,Stock,,,127.5
+SPGI,S&P Global Inc. Common Stock,Stock,,,127.1
+SYK,Stryker Corporation Common Stock,Stock,,,126.4
+PH,Parker-Hannifin Corporation Common Stock,Stock,,,126.3
+PDD,PDD Holdings Inc. - American Depositary Shares,Stock,,,125.8
+MFG,"Mizuho Financial Group, Inc. Sponosred ADR (Japan)",Stock,,,124.9
+PBR,Petroleo Brasileiro S.A. Petrobras ADS,Stock,,,123.4
 BNDX,Vanguard Total International Bond ETF,ETF,ETF,,122.5
-LOW,"Lowe's Companies, Inc.",Stock,Consumer Cyclical,Home Improvement Retail,122.5
-PGR,The Progressive Corporation,Stock,Financial Services,Insurance - Property & Casualty,121.9
+IJH,iShares Core S&P Mid-Cap ETF,ETF,ETF,,122.4
+BMO,Bank Of Montreal Common Stock,Stock,,,122.2
+SBUX,Starbucks Corporation - Common Stock,Stock,,,122.1
+HDB,HDFC Bank Limited Common Stock,Stock,,,121.2
 IWF,iShares Russell 1000 Growth Fund,ETF,ETF,,121.2
-FTNT,"Fortinet, Inc.",Stock,Technology,Software - Infrastructure,117.4
+LOW,"Lowe's Companies, Inc. Common Stock",Stock,,,121.2
+BTI,"British American Tobacco  Industries, p.l.c. Common Stock ADR",Stock,,,121.1
+MDT,Medtronic plc. Ordinary Shares,Stock,,,119.5
+CVS,CVS Health Corporation Common Stock,Stock,,,119.0
+PBR.A,Petroleo Brasileiro S.A. Petrobras American Depositary Shares representing Preferred Shares,Stock,,,117.9
 XLK,State Street Technology Select Sector SPDR ETF,ETF,ETF,,115.4
-HWM,Howmet Aerospace Inc.,Stock,Industrials,Aerospace & Defense,115.3
-SNOW,Snowflake Inc.,Stock,Technology,Software - Application,114.0
-NET,"Cloudflare, Inc.",Stock,Technology,Software - Infrastructure,112.4
-BNY,The Bank of New York Mellon Cor,Stock,Financial Services,Banks - Diversified,110.8
-ABNB,"Airbnb, Inc.",Stock,Consumer Cyclical,Travel Services,110.2
-MO,"Altria Group, Inc.",Stock,Consumer Defensive,Tobacco,109.7
-EQIX,"Equinix, Inc.",Stock,Real Estate,REIT - Specialty,108.7
-ADP,"Automatic Data Processing, Inc.",Stock,Technology,Software - Application,108.4
-BX,Blackstone Inc.,Stock,Financial Services,Asset Management,108.0
-GD,General Dynamics Corporation,Stock,Industrials,Aerospace & Defense,107.1
-SO,Southern Company (The),Stock,Utilities,Utilities - Regulated Electric,106.8
-APP,AppLovin Corporation,Stock,Communication Services,Advertising Agencies,106.0
-ADBE,Adobe Inc.,Stock,Technology,Software - Application,104.9
+BP,BP p.l.c. Common Stock,Stock,,,115.3
+SNOW,Snowflake Inc. Common Stock,Stock,,,115.3
+ACN,Accenture plc Class A Ordinary Shares (Ireland),Stock,,,113.4
+FTNT,"Fortinet, Inc. - Common Stock",Stock,,,112.6
+ADP,"Automatic Data Processing, Inc.",Stock,Technology,Software - Application,111.6
+SNY,Sanofi - American Depositary Shares,Stock,,,111.3
+ABNB,"Airbnb, Inc.",Stock,Consumer Cyclical,Travel Services,110.4
+MO,"Altria Group, Inc.",Stock,,,110.4
+ENB,Enbridge Inc Common Stock,Stock,,,110.2
+SPOT,Spotify Technology S.A. Ordinary Shares,Stock,,,109.7
+IJR,iShares Core S&P Small-Cap ETF,ETF,ETF,,109.6
+ADBE,Adobe Inc.,Stock,Technology,Software - Application,109.4
+AEM,Agnico Eagle Mines Limited Common Stock,Stock,,,109.4
+HWM,Howmet Aerospace Inc. Common Stock,Stock,,,108.3
+BNY,The Bank of New York Mellon Corporation Common Stock,Stock,,,107.5
+IBN,ICICI Bank Limited Common Stock,Stock,,,107.3
+BNS,Bank Nova Scotia Halifax Pfd 3 Ordinary Shares,Stock,,,106.8
+CM,Canadian Imperial Bank of Commerce Common Stock,Stock,,,106.3
+CNQ,Canadian Natural Resources Limited Common Stock,Stock,,,106.0
+EQIX,"Equinix, Inc. - Common Stock",Stock,,,105.1
+GSK,GSK plc American Depositary Shares (Each representing two Ordinary Shares),Stock,,,105.0
+NET,"Cloudflare, Inc. Class A Common Stock",Stock,,,104.4
 SCHD,Schwab US Dividend Equity ETF,ETF,ETF,,104.2
-PWR,"Quanta Services, Inc.",Stock,Industrials,Engineering & Construction,103.1
-PNC,"The PNC Financial Services Group, Inc.",Stock,Financial Services,Banks - Regional,102.5
-KKR,KKR & Co. Inc.,Stock,Financial Services,Asset Management,102.3
-USB,U.S. Bancorp,Stock,Financial Services,Banks - Regional,101.9
-MCK,McKesson Corporation,Stock,Healthcare,Medical Distribution,101.3
-CEG,Constellation Energy Corporation,Stock,Utilities,Utilities - Independent Power Producers,100.1
+GD,General Dynamics Corporation Common Stock,Stock,,,104.0
+APP,AppLovin Corporation,Stock,Communication Services,Advertising Agencies,102.7
+SO,Southern Company (The) Common Stock,Stock,,,102.3
+EQNR,Equinor ASA,Stock,,,101.8
+MPC,Marathon Petroleum Corporation Common Stock,Stock,,,101.3
+VRT,"Vertiv Holdings, LLC Class A Common Stock",Stock,,,100.8
+INTU,Intuit Inc. - Common Stock,Stock,,,100.4
+VLO,Valero Energy Corporation Common Stock,Stock,,,100.4
+MCK,McKesson Corporation Common Stock,Stock,,,100.1
 SGOV,iShares 0-3 Month Treasury Bond ETF,ETF,ETF,,99.9
-MPC,Marathon Petroleum Corporation,Stock,Energy,Oil & Gas Refining & Marketing,99.8
-VYM,Vanguard High Dividend Yield ETF,ETF,ETF,,99.2
-VLO,Valero Energy Corporation,Stock,Energy,Oil & Gas Refining & Marketing,98.4
+TT,Trane Technologies plc,Stock,,,99.8
+ING,"ING Group, N.V. Common Stock",Stock,,,99.5
+CME,CME Group Inc.,Stock,Financial Services,Financial Data & Stock Exchanges,98.9
 VT,Vanguard Total World Stock Index ETF,ETF,ETF,,97.9
+MELI,"MercadoLibre, Inc. - Common Stock",Stock,,,97.5
+DASH,"DoorDash, Inc. - Common Stock",Stock,,,97.4
+KKR,KKR & Co. Inc. Common Stock,Stock,,,97.4
 RSP,Invesco S&P 500 Equal Weight ETF,ETF,ETF,,97.3
+HOOD,"Robinhood Markets, Inc. - Class A Common Stock",Stock,,,97.2
 QQQM,Invesco NASDAQ 100 ETF,ETF,ETF,,97.1
-CME,CME Group Inc.,Stock,Financial Services,Financial Data & Stock Exchanges,97.0
-DUK,Duke Energy Corporation,Stock,Utilities,Utilities - Regulated Electric,96.6
+PNC,"PNC Financial Services Group, Inc. (The) Common Stock",Stock,,,97.0
+CEG,Constellation Energy Corporation,Stock,Utilities,Utilities - Independent Power Producers,96.7
+USB,U.S. Bancorp Common Stock,Stock,,,96.7
+PWR,"Quanta Services, Inc. Common Stock",Stock,,,96.1
 VEU,Vanguard FTSE All World Ex US ETF,ETF,ETF,,95.9
-INTU,Intuit Inc.,Stock,Technology,Software - Application,94.6
+CSX,CSX Corporation,Stock,Industrials,Railroads,95.6
+CMCSA,Comcast Corporation,Stock,Communication Services,Telecom Services,95.3
+ASX,"ASE Technology Holding Co., Ltd. American Depositary Shares (each representing Two Common Shares) ",Stock,,,95.1
 ITOT,iShares Core S&P Total U.S. Stock Market ETF,ETF,ETF,,94.3
-MMM,3M Company,Stock,Industrials,Conglomerates,94.2
-VXF,Vanguard Extended Market ETF,ETF,ETF,,93.6
-PSX,Phillips 66,Stock,Energy,Oil & Gas Refining & Marketing,93.2
-FCX,"Freeport-McMoRan, Inc.",Stock,Basic Materials,Copper,93.1
-MAR,Marriot International Class A Common Stock,Stock,Consumer Cyclical,Lodging,93.0
-CMCSA,Comcast Corporation,Stock,Communication Services,Telecom Services,92.9
-CSX,CSX Corporation,Stock,Industrials,Railroads,92.9
-WMB,"The Williams Companies, Inc.",Stock,Energy,Oil & Gas Midstream,92.0
-DDOG,"Datadog, Inc.",Stock,Technology,Software - Application,91.7
-MNST,Monster Beverage Corporation,Stock,Consumer Defensive,Beverages - Non-Alcoholic,91.7
-EMR,Emerson Electric Co.,Stock,Industrials,Specialty Industrial Machinery,91.0
-WM,"Waste Management, Inc.",Stock,Industrials,Waste Management,89.8
-MRSH,"Marsh & McLennan Companies, Inc.",Stock,Financial Services,Insurance Brokers,89.6
-UPS,"United Parcel Service, Inc.",Stock,Industrials,Integrated Freight & Logistics,88.9
-HCA,"HCA Healthcare, Inc.",Stock,Healthcare,Medical Care Facilities,87.6
-SHW,The Sherwin-Williams Company,Stock,Basic Materials,Specialty Chemicals,87.2
-CMI,Cummins Inc.,Stock,Industrials,Specialty Industrial Machinery,86.9
-ICE,Intercontinental Exchange Inc.,Stock,Financial Services,Financial Data & Stock Exchanges,86.9
-ELV,"Elevance Health, Inc.",Stock,Healthcare,Healthcare Plans,86.8
-BAM,Brookfield Asset Management Ltd.,Stock,Financial Services,Asset Management,86.7
-HOOD,"Robinhood Markets, Inc.",Stock,Financial Services,Capital Markets,85.9
-EPD,Enterprise Products Partners L.P.,Stock,Energy,Oil & Gas Midstream,84.0
-MCO,Moody's Corporation,Stock,Financial Services,Financial Data & Stock Exchanges,84.0
-NOC,Northrop Grumman Corporation,Stock,Industrials,Aerospace & Defense,83.2
-APO,"Apollo Global Management, Inc.",Stock,Financial Services,Asset Management,83.1
-CVNA,Carvana Co.,Stock,Consumer Cyclical,Auto & Truck Dealerships,83.1
-ITW,Illinois Tool Works Inc.,Stock,Industrials,Specialty Industrial Machinery,82.8
-REGN,"Regeneron Pharmaceuticals, Inc.",Stock,Healthcare,Biotechnology,82.7
-LITE,Lumentum Holdings Inc.,Stock,Technology,Communication Equipment,82.1
+MNST,Monster Beverage Corporation - Common Stock,Stock,,,93.6
+DUK,Duke Energy Corporation (Holding Company) Common Stock,Stock,,,93.4
+BN,Brookfield Corporation Class A Limited Voting Shares,Stock,,,93.1
+MAR,Marriott International - Class A Common Stock,Stock,,,92.9
+HCA,"HCA Healthcare, Inc. Common Stock",Stock,,,92.9
+MMM,3M Company Common Stock,Stock,,,92.3
+MRSH,Marsh Common Stock,Stock,,,91.6
+ICE,Intercontinental Exchange Inc. Common Stock,Stock,,,90.5
+BCS,Barclays PLC Common Stock,Stock,,,90.2
+WM,"Waste Management, Inc. Common Stock",Stock,,,89.6
+CDNS,"Cadence Design Systems, Inc.",Stock,Technology,Software - Application,87.9
+EMR,Emerson Electric Company Common Stock,Stock,,,87.7
+LYG,Lloyds Banking Group Plc American Depositary Shares,Stock,,,87.3
+MCO,Moody's Corporation Common Stock,Stock,,,87.2
+ELV,"Elevance Health, Inc. Common Stock",Stock,,,86.9
+UPS,"United Parcel Service, Inc. Common Stock",Stock,,,86.8
+JCI,Johnson Controls International plc Ordinary Share,Stock,,,86.7
+WMB,"Williams Companies, Inc. (The) Common Stock",Stock,,,86.2
+REGN,"Regeneron Pharmaceuticals, Inc. - Common Stock",Stock,,,85.9
+CP,Canadian Pacific Kansas City Limited Common Shares,Stock,,,85.0
+DDOG,"Datadog, Inc. - Class A Common Stock",Stock,,,84.6
+SHW,Sherwin-Williams Company (The) Common Stock,Stock,,,84.1
+BAM,Brookfield Asset Management Inc Class A Limited Voting Shares,Stock,,,83.5
+ITUB,Itau Unibanco Banco Holding SA American Depositary Shares (Each repstg 500 Preferred shares),Stock,,,82.4
+MDLZ,"Mondelez International, Inc. - Class A Common Stock",Stock,,,82.3
+NTES,"NetEase, Inc. - American Depositary Shares, each representing 5 ordinary shares",Stock,,,82.1
+EPD,Enterprise Products Partners L.P. Common Stock,Stock,,,82.1
+AMT,American Tower Corporation (REIT) Common Stock,Stock,,,81.9
 IWD,iShares Russell 1000 Value ETF,ETF,ETF,,81.9
-AMT,American Tower Corporation,Stock,Real Estate,REIT - Specialty,81.8
-RCL,Royal Caribbean Cruises Ltd.,Stock,Consumer Cyclical,Travel Services,81.6
-MDLZ,"Mondelez International, Inc.",Stock,Consumer Defensive,Confectioners,81.2
-SNPS,"Synopsys, Inc.",Stock,Technology,Software - Infrastructure,80.7
+E,ENI S.p.A. Common Stock,Stock,,,81.7
+CTAS,Cintas Corporation - Common Stock,Stock,,,81.6
+CMI,Cummins Inc. Common Stock,Stock,,,80.9
+SU,Suncor Energy  Inc. Common Stock,Stock,,,80.8
+ITW,Illinois Tool Works Inc. Common Stock,Stock,,,80.4
+EOG,"EOG Resources, Inc. Common Stock",Stock,,,80.3
+NGG,"National Grid Transco, PLC National Grid PLC (NEW) American Depositary Shares",Stock,,,80.2
 IWM,iShares Russell 2000 Index Fund,ETF,ETF,,80.1
-CTAS,Cintas Corporation,Stock,Industrials,Specialty Business Services,79.8
-SLB,SLB N.V.,Stock,Energy,Oil & Gas Equipment & Services,79.8
-FDX,FedEx Corporation,Stock,Industrials,Integrated Freight & Logistics,79.2
-ROST,"Ross Stores, Inc.",Stock,Consumer Cyclical,Apparel Retail,78.7
-GM,General Motors Company,Stock,Consumer Cyclical,Auto Manufacturers,78.5
+SLB,SLB Limited Common Shares,Stock,,,80.0
+GM,General Motors Company Common Stock,Stock,,,79.5
+MSI,"Motorola Solutions, Inc. Common Stock",Stock,,,79.5
+ECL,Ecolab Inc. Common Stock,Stock,,,78.9
+NSC,Norfolk Southern Corporation Common Stock,Stock,,,78.8
+CNI,Canadian National Railway Company Common Stock,Stock,,,78.5
+APO,"Apollo Global Management, Inc. (New) Common Stock",Stock,,,78.4
+B,Barrick Mining Corporation Common Shares,Stock,,,78.3
+NOC,Northrop Grumman Corporation Common Stock,Stock,,,78.3
+RCL,Royal Caribbean Cruises Ltd. Common Stock,Stock,,,78.1
 EFA,iShares MSCI EAFE ETF,ETF,ETF,,78.0
-HPE,Hewlett Packard Enterprise Company,Stock,Technology,Communication Equipment,77.7
-ECL,Ecolab Inc.,Stock,Basic Materials,Specialty Chemicals,77.4
-MSI,"Motorola Solutions, Inc.",Stock,Technology,Communication Equipment,77.2
-TRV,"The Travelers Companies, Inc.",Stock,Financial Services,Insurance - Property & Casualty,77.2
-BSX,Boston Scientific Corporation,Stock,Healthcare,Medical Devices,75.1
-NSC,Norfolk Southern Corporation,Stock,Industrials,Railroads,75.1
-EOG,"EOG Resources, Inc.",Stock,Energy,Oil & Gas E&P,74.8
-CI,The Cigna Group,Stock,Healthcare,Healthcare Plans,74.7
-HON,Honeywell International Inc.,Stock,Industrials,Conglomerates,74.2
-DLR,"Digital Realty Trust, Inc.",Stock,Real Estate,REIT - Specialty,74.1
+LITE,Lumentum Holdings Inc. - Common Stock,Stock,,,77.7
+CVNA,Carvana Co. Class A Common Stock,Stock,,,76.9
+FDX,FedEx Corporation Common Stock,Stock,,,76.9
+ROST,"Ross Stores, Inc. - Common Stock",Stock,,,76.7
+RACE,Ferrari N.V. Common Shares,Stock,,,76.7
+SNPS,"Synopsys, Inc. - Common Stock",Stock,,,76.2
+AON,Aon plc Class A Ordinary Shares (Ireland),Stock,,,75.3
+TGT,Target Corporation Common Stock,Stock,,,75.1
+NWG,"NatWest Group plc American Depositary Shares, (each representing two (2) Ordinary Shares)",Stock,,,74.0
 VV,Vanguard Morningstar Large-Cap ETF,ETF,ETF,,74.0
 IVW,iShares S&P 500 Growth ETF,ETF,ETF,,73.8
-ORLY,"O'Reilly Automotive, Inc.",Stock,Consumer Cyclical,Auto Parts,73.7
-HLT,Hilton Worldwide Holdings Inc.,Stock,Consumer Cyclical,Lodging,73.6
-CL,Colgate-Palmolive Company,Stock,Consumer Defensive,Household & Personal Products,73.3
-KMI,"Kinder Morgan, Inc.",Stock,Energy,Oil & Gas Midstream,73.1
+HLT,Hilton Worldwide Holdings Inc. Common Stock ,Stock,,,73.5
+CI,The Cigna Group Common Stock,Stock,,,73.3
 VNQ,Vanguard Real Estate ETF,ETF,ETF,,73.1
-ET,Energy Transfer LP,Stock,Energy,Oil & Gas Midstream,72.5
+BSX,Boston Scientific Corporation Common Stock,Stock,,,73.0
+ET,Energy Transfer LP Common Units ,Stock,,,73.0
+CL,Colgate-Palmolive Company Common Stock,Stock,,,72.6
+ORLY,"O'Reilly Automotive, Inc. - Common Stock",Stock,,,72.1
+SE,"Sea Limited American Depositary Shares, each representing one Class A Ordinary Share",Stock,,,72.0
 SCHX,Schwab U.S. Large-Cap ETF,ETF,ETF,,71.8
-URI,"United Rentals, Inc.",Stock,Industrials,Rental & Leasing Services,71.8
+WPM,Wheaton Precious Metals Corp Common Shares (Canada),Stock,,,71.7
+WBD,"Warner Bros. Discovery, Inc. - Series A Common Stock",Stock,,,71.6
+AMX,"America Movil, S.A.B. de C.V. American Depositary Shares (each representing the right to receive twenty (20) Series B Shares",Stock,,,71.3
 VTIP,Vanguard Short-Term Inflation-Protected Securities Index Fund ETF Shares,ETF,ETF,,71.2
-SPG,"Simon Property Group, Inc.",Stock,Real Estate,REIT - Retail,71.0
+DB,Deutsche Bank AG Common Stock,Stock,,,71.1
+HPE,Hewlett Packard Enterprise Company Common Stock,Stock,,,70.8
 BSV,Vanguard Short-Term Bond ETF,ETF,ETF,,70.6
-WBD,"Warner Bros. Discovery, Inc.",Stock,Communication Services,Entertainment,70.2
-TGT,Target Corporation,Stock,Consumer Defensive,Discount Stores,70.2
+MFC,Manulife Financial Corporation Common Stock,Stock,,,70.6
+SPG,"Simon Property Group, Inc. Common Stock",Stock,,,70.6
+DLR,"Digital Realty Trust, Inc. Common Stock",Stock,,,70.5
+NU,Nu Holdings Ltd. Class A Ordinary Shares,Stock,,,70.4
 VCIT,Vanguard Intermediate-Term Corporate Bond ETF,ETF,ETF,,69.8
-TDG,Transdigm Group Incorporated,Stock,Industrials,Aerospace & Defense,69.5
-MPWR,"Monolithic Power Systems, Inc.",Stock,Technology,Semiconductors,68.9
-APD,"Air Products and Chemicals, Inc",Stock,Basic Materials,Specialty Chemicals,68.8
-AEP,"American Electric Power Company, Inc.",Stock,Utilities,Utilities - Regulated Electric,68.4
+PCAR,PACCAR Inc. - Common Stock,Stock,,,69.0
+KMI,"Kinder Morgan, Inc. Common Stock",Stock,,,69.0
+IMO,Imperial Oil Limited Common Stock,Stock,,,68.6
+HON,Honeywell International Inc. - Common Stock,Stock,,,68.4
+URI,"United Rentals, Inc. Common Stock",Stock,,,68.4
 VBR,Vanguard Morningstar Small-Cap Value ETF,ETF,ETF,,68.3
 SMH,VanEck Semiconductor ETF,ETF,ETF,,68.1
-BE,Bloom Energy Corporation,Stock,Industrials,Electrical Equipment & Parts,67.7
+APD,"Air Products and Chemicals, Inc. Common Stock",Stock,,,67.9
+RSG,"Republic Services, Inc. Common Stock",Stock,,,67.6
 SCHF,Schwab International Equity ETF,ETF,ETF,,67.2
-ALL,The Allstate Corporation,Stock,Financial Services,Insurance - Property & Casualty,66.1
-RSG,"Republic Services, Inc.",Stock,Industrials,Waste Management,65.7
-TFC,Truist Financial Corporation,Stock,Financial Services,Banks - Regional,64.9
-AJG,Arthur J. Gallagher & Co.,Stock,Financial Services,Insurance Brokers,64.4
-BKR,Baker Hughes Company,Stock,Energy,Oil & Gas Equipment & Services,64.3
-COHR,Coherent Corp.,Stock,Technology,Scientific & Technical Instruments,63.7
-FIX,"Comfort Systems USA, Inc.",Stock,Industrials,Engineering & Construction,62.4
-GWW,"W.W. Grainger, Inc.",Stock,Industrials,Industrial Distribution,62.3
-MET,"MetLife, Inc.",Stock,Financial Services,Insurance - Life,62.1
-KEYS,"Keysight Technologies, Inc.",Stock,Technology,Scientific & Technical Instruments,61.1
-NUE,Nucor Corporation,Stock,Basic Materials,Steel,61.0
-AFL,AFLAC Incorporated,Stock,Financial Services,Insurance - Life,60.9
-PSA,Public Storage,Stock,Real Estate,REIT - Industrial,60.9
-CIEN,Ciena Corporation,Stock,Technology,Communication Equipment,60.7
-D,"Dominion Energy, Inc.",Stock,Utilities,Utilities - Regulated Electric,60.5
-NKE,"NIKE, Inc.",Stock,Consumer Cyclical,Footwear & Accessories,60.4
-MPLX,MPLX LP,Stock,Energy,Oil & Gas Midstream,60.3
+TDG,Transdigm Group Incorporated Common Stock,Stock,,,66.4
+AEP,"American Electric Power Company, Inc.",Stock,Utilities,Utilities - Regulated Electric,65.8
+TRP,TC Energy Corporation Common Stock,Stock,,,64.6
+ALL,Allstate Corporation (The) Common Stock,Stock,,,64.2
+TRGP,"Targa Resources, Inc. Common Stock",Stock,,,64.1
+RELX,RELX PLC PLC American Depositary Shares (Each representing One Ordinary Share),Stock,,,62.6
+VALE,VALE S.A.  American Depositary Shares Each Representing one common share,Stock,,,62.1
+BKR,Baker Hughes Company,Stock,Energy,Oil & Gas Equipment & Services,61.9
+GWW,"W.W. Grainger, Inc. Common Stock",Stock,,,61.8
+TFC,Truist Financial Corporation Common Stock,Stock,,,61.6
+AU,AngloGold Ashanti PLC Ordinary Shares,Stock,,,61.3
+COR,"Cencora, Inc. Common Stock",Stock,,,60.7
+CVE,Cenovus Energy Inc Common Stock,Stock,,,60.7
+NKE,"Nike, Inc. Common Stock",Stock,,,60.5
+PSA,Public Storage Common Stock,Stock,,,60.2
+MET,"MetLife, Inc. Common Stock",Stock,,,60.0
 SCHG,Schwab U.S. Large-Cap Growth ETF,ETF,ETF,,60.0
-COR,"Cencora, Inc.",Stock,Healthcare,Medical Distribution,59.9
 IAU,iShares Gold Trust Shares,ETF,ETF,,59.7
-O,Realty Income Corporation,Stock,Real Estate,REIT - Retail,59.4
-TRGP,Targa Resources Corp.,Stock,Energy,Oil & Gas Midstream,59.1
-DAL,"Delta Air Lines, Inc.",Stock,Industrials,Airlines,58.8
-FAST,Fastenal Company,Stock,Industrials,Industrial Distribution,58.5
+NBIS,Nebius Group N.V. - Class A Ordinary Shares,Stock,,,59.6
+BE,Bloom Energy Corporation Class A Common Stock,Stock,,,59.3
+MPLX,MPLX LP Common Units Representing Limited Partner Interests,Stock,,,59.2
+O,Realty Income Corporation Common Stock,Stock,,,59.2
+FANG,"Diamondback Energy, Inc. - Common Stock",Stock,,,59.0
+TEL,TE Connectivity plc Ordinary Shares,Stock,,,58.9
+FAST,Fastenal Company - Common Stock,Stock,,,58.8
+OKE,"ONEOK, Inc. Common Stock",Stock,,,58.8
+TER,"Teradyne, Inc. - Common Stock",Stock,,,58.7
+D,"Dominion Energy, Inc. Common Stock",Stock,,,58.6
 IXUS,iShares Core MSCI Total International Stock ETF,ETF,ETF,,58.4
-AME,"AMETEK, Inc.",Stock,Industrials,Specialty Industrial Machinery,58.4
-OXY,Occidental Petroleum Corporation,Stock,Energy,Oil & Gas E&P,58.3
-CRWV,"CoreWeave, Inc.",Stock,Technology,Software - Infrastructure,58.1
+FIX,"Comfort Systems USA, Inc. Common Stock",Stock,,,58.3
+AFL,AFLAC Incorporated Common Stock,Stock,,,58.2
+TAK,Takeda Pharmaceutical Company Limited American Depositary Shares (each representing 1/2 of a share of Common Stock),Stock,,,58.1
+MRNA,"Moderna, Inc. - Common Stock",Stock,,,57.9
 XLF,State Street Financial Select Sector SPDR ETF,ETF,ETF,,57.9
-F,Ford Motor Company,Stock,Consumer Cyclical,Auto Manufacturers,57.3
-FANG,"Diamondback Energy, Inc.",Stock,Energy,Oil & Gas E&P,56.7
-SRE,DBA Sempra,Stock,Utilities,Utilities - Diversified,56.5
-LNG,"Cheniere Energy, Inc.",Stock,Energy,Oil & Gas Midstream,56.1
+F,Ford Motor Company Common Stock,Stock,,,57.5
+LNG,"Cheniere Energy, Inc. Common Stock",Stock,,,57.3
+NOK,Nokia Corporation Sponsored American Depositary Shares,Stock,,,57.0
+NXPI,NXP Semiconductors N.V. - Common Stock,Stock,,,56.9
+GRMN,Garmin Ltd. Common Stock (Switzerland),Stock,,,56.9
+COHR,Coherent Corp. Common Stock,Stock,,,56.7
+CIEN,Ciena Corporation Common Stock,Stock,,,56.0
 IWR,iShares Russell Mid-Cap ETF,ETF,ETF,,55.9
-ALAB,"Astera Labs, Inc.",Stock,Technology,Semiconductors,55.8
-CAH,"Cardinal Health, Inc.",Stock,Healthcare,Medical Distribution,54.7
-LHX,"L3Harris Technologies, Inc.",Stock,Industrials,Aerospace & Defense,54.3
-NDAQ,"Nasdaq, Inc.",Stock,Financial Services,Financial Data & Stock Exchanges,54.2
-ADSK,"Autodesk, Inc.",Stock,Technology,Software - Application,53.1
-HONA,Honeywell Aerospace Inc.,Stock,Industrials,Aerospace & Defense,52.7
-PYPL,"PayPal Holdings, Inc.",Stock,Financial Services,Credit Services,52.7
-FITB,Fifth Third Bancorp,Stock,Financial Services,Banks - Regional,52.7
-STT,State Street Corporation,Stock,Financial Services,Asset Management,52.7
-HEI,Heico Corporation,Stock,Industrials,Aerospace & Defense,52.4
+NUE,Nucor Corporation Common Stock,Stock,,,55.3
+NDAQ,"Nasdaq, Inc. - Common Stock",Stock,,,54.9
+AME,"AMETEK, Inc.",Stock,,,54.9
+CTVA,"Corteva, Inc. Common Stock ",Stock,,,54.6
+MT,Arcelor Mittal NY Registry Shares NEW,Stock,,,54.4
+DAL,"Delta Air Lines, Inc. Common Stock",Stock,,,54.2
+SRE,DBA Sempra Common Stock,Stock,,,54.2
+KEYS,Keysight Technologies Inc. Common Stock,Stock,,,53.8
+ADSK,"Autodesk, Inc.",Stock,Technology,Software - Application,53.6
+CAH,"Cardinal Health, Inc. Common Stock",Stock,,,53.4
+PYPL,"PayPal Holdings, Inc. - Common Stock",Stock,,,52.7
+DEO,Diageo plc Common Stock,Stock,,,52.6
+BDX,"Becton, Dickinson and Company Common Stock",Stock,,,52.3
+HONA,Honeywell Aerospace Inc. - Common Stock,Stock,,,52.2
 SPYG,State Street SPDR Portfolio S&P 500 Growth ETF,ETF,ETF,,52.2
-CBRS,Cerebras Systems Inc.,Stock,Technology,Semiconductors,52.0
 VCSH,Vanguard Short-Term Corporate Bond ETF,ETF,ETF,,52.0
 BIV,Vanguard Intermediate-Term Bond ETF,ETF,ETF,,51.9
-CARR,Carrier Global Corporation,Stock,Industrials,Building Products & Equipment,51.8
-RKLB,Rocket Lab Corporation,Stock,Industrials,Aerospace & Defense,51.3
-CTVA,"Corteva, Inc.",Stock,Basic Materials,Agricultural Inputs,51.2
+EW,Edwards Lifesciences Corporation Common Stock,Stock,,,51.8
+VONG,Vanguard Russell 1000 Growth ETF,ETF,ETF,,51.6
+STT,State Street Corporation Common Stock,Stock,,,51.4
+FNV,Franco-Nevada Corporation,Stock,,,51.2
+AXON,"Axon Enterprise, Inc.",Stock,Industrials,Aerospace & Defense,51.0
 VGIT,Vanguard Intermediate-Term Treasury ETF,ETF,ETF,,50.8
-WAB,Westinghouse Air Brake Technolo,Stock,Industrials,Railroads,50.5
-DVN,Devon Energy Corporation,Stock,Energy,Oil & Gas E&P,50.4
-AMP,"Ameriprise Financial, Inc.",Stock,Financial Services,Asset Management,50.3
-ETR,Entergy Corporation,Stock,Utilities,Utilities - Regulated Electric,50.3
