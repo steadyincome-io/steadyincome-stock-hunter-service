@@ -33,6 +33,7 @@ import pandas as pd
 from .schema import DB_NAME
 from .logger import banner, step, info, success, warning, error
 from .ai_narrative import score_news_sentiment
+from .yfinance_throttle import throttle_yfinance
 
 try:
     import yfinance as yf
@@ -475,6 +476,7 @@ def has_earnings_within(ticker, days=EARNINGS_LOOKAHEAD_DAYS):
     if yf is None:
         return False, None
     try:
+        throttle_yfinance()
         calendar = yf.Ticker(_yf_symbol(ticker)).calendar
         earnings_dates = calendar.get("Earnings Date") if calendar else None
         if not earnings_dates:
@@ -538,6 +540,7 @@ def fetch_live_price(ticker):
     if yf is None:
         return None
     try:
+        throttle_yfinance()
         hist = yf.Ticker(_yf_symbol(ticker)).history(period="1d")
         if hist.empty:
             return None
@@ -559,6 +562,7 @@ def fetch_recent_news_headlines(ticker, limit=NEWS_HEADLINE_COUNT):
     if yf is None:
         return ""
     try:
+        throttle_yfinance()
         news = yf.Ticker(_yf_symbol(ticker)).news
         if not news:
             return ""
@@ -577,6 +581,7 @@ def fetch_recent_news_headlines(ticker, limit=NEWS_HEADLINE_COUNT):
 
 def _find_weekly_expiration(stock):
     """Nearest expiration 4-10 days out. Returns (exp_str, days_out) or (None, None)."""
+    throttle_yfinance()
     expirations = stock.options
     if not expirations:
         return None, None
@@ -671,6 +676,7 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
         if target_exp is None:
             return None, "No weekly expiration (4-10 days out) available"
 
+        throttle_yfinance()
         chain = stock.option_chain(target_exp)
         table = chain.puts if option_side == "puts" else chain.calls
         if table.empty:
@@ -925,6 +931,7 @@ def backtest_day_of_week_breach(ticker, option_side, otm_pct, lookback_years=DAY
     if yf is None:
         return None
     try:
+        throttle_yfinance()
         hist = yf.Ticker(_yf_symbol(ticker)).history(period=f"{lookback_years}y")
     except Exception as exc:
         warning(f"{ticker}: day-of-week backtest history fetch failed: {exc}")

@@ -12,7 +12,6 @@ series for both stocks and ETFs.
 from __future__ import annotations
 
 import sqlite3
-import time
 
 try:
     import yfinance as yf
@@ -20,24 +19,11 @@ except Exception:
     yf = None
 
 from .logger import step, info, success, warning, error, ticker_start, ticker_done, progress
-
-# yfinance has no documented/official rate limit (unlike Alpaca's 200/min) --
-# it's an unofficial scrape of Yahoo's endpoints. The existing pipeline already
-# calls yf.Ticker(...).history() for every ticker with no throttle and it works,
-# but Yahoo is known to rate-limit/block high-volume or cloud-IP traffic (same
-# class of risk as the SEC-blocking incident this project already hit once).
-# This is a new call path, so it gets a light proactive throttle rather than
-# waiting for a real failure to force the issue.
-_MIN_INTERVAL_SEC = 0.2
-_last_call_time = 0.0
+from .yfinance_throttle import throttle_yfinance
 
 
 def _throttled_dividends(yf_ticker):
-    global _last_call_time
-    elapsed = time.time() - _last_call_time
-    if elapsed < _MIN_INTERVAL_SEC:
-        time.sleep(_MIN_INTERVAL_SEC - elapsed)
-    _last_call_time = time.time()
+    throttle_yfinance()
     return yf.Ticker(yf_ticker).dividends
 
 

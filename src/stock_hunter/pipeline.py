@@ -10,6 +10,7 @@ from .sec_etf_worker import sync_etf_reports
 from .sec_financials_worker import sync_10k_10q_financials, get_annual_revenue_history
 from .sec_eightk_worker import sync_8k_events
 from .dividend_worker import sync_dividend_history
+from .yfinance_throttle import throttle_yfinance
 from .drawdown_analytics import compute_and_store_drawdowns, drawdown_opportunity_score
 from .distress_analytics import compute_distress, store_distress_score
 from .dcf_valuation import compute_dcf_fair_value, compute_base_growth_rate
@@ -568,6 +569,7 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                 existing_price_rows = cursor.fetchone()[0]
                 needs_backfill = existing_price_rows < PRICE_HISTORY_BACKFILL_THRESHOLD
 
+                throttle_yfinance()
                 stock = yf.Ticker(yf_ticker)
                 hist = stock.history(period="5y" if needs_backfill else "1y")
 
@@ -616,6 +618,12 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
                 # figures (forward PE has no SEC substitute); everything else is computed
                 # from our own SEC fundamentals when available, falling back to yfinance's
                 # own figures only when SEC data is missing (e.g. financials not synced yet).
+                # Throttle before touching .info at all -- hasattr() on a yfinance
+                # Ticker's .info property actually triggers its network fetch (the
+                # property raises internally if unavailable, and hasattr() must
+                # invoke the getter to find out), so throttling only around the
+                # later `stock.info` access would miss the real request.
+                throttle_yfinance()
                 stock_info = stock.info if hasattr(stock, 'info') else {}
                 fwd_pe = float(stock_info.get('forwardPE', 24.0) or 24.0)
                 # FINRA settlement data via yfinance, e.g. 0.1354 = 13.54% of

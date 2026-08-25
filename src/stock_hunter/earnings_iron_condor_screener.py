@@ -60,6 +60,7 @@ from datetime import date, datetime, timedelta
 import requests
 
 from .logger import banner, step, info, success, warning, error
+from .yfinance_throttle import throttle_yfinance
 from .premium_screener import fetch_live_price
 from .earnings_reaction_screener import (
     REACTION_LOOKBACK_QUARTERS,
@@ -284,6 +285,7 @@ def compute_condor_economics_live(ticker, report_date_str, timing, spot_price):
         return None
     try:
         stock = yf.Ticker(_yf_symbol(ticker))
+        throttle_yfinance()
         chain = stock.option_chain(anchor["expiration"])
         calls, puts = chain.calls, chain.puts
         if calls.empty or puts.empty:

@@ -54,6 +54,7 @@ import requests
 from .logger import banner, step, info, success, warning, error
 from .premium_screener import fetch_live_price
 from .schema import DB_NAME
+from .yfinance_throttle import throttle_yfinance
 
 try:
     import yfinance as yf
@@ -172,6 +173,7 @@ def fetch_reaction_history(ticker, quarters=REACTION_LOOKBACK_QUARTERS):
         # edge cases in per-call date ranges.
         earliest = reported.index.min().tz_localize(None) - timedelta(days=10)
         latest = reported.index.max().tz_localize(None) + timedelta(days=10)
+        throttle_yfinance()
         prices = stock.history(start=earliest, end=latest + timedelta(days=1))
         if prices.empty:
             return []
@@ -261,6 +263,7 @@ def check_preearnings_runup(ticker, report_date_str, lookback_days=RUNUP_LOOKBAC
         report_date = datetime.fromisoformat(report_date_str)
         start = report_date - timedelta(days=lookback_days + 5)
         stock = yf.Ticker(_yf_symbol(ticker))
+        throttle_yfinance()
         prices = stock.history(start=start, end=report_date + timedelta(days=1))
         if prices.empty:
             return False, None
@@ -300,6 +303,7 @@ def compute_implied_move_live(ticker, report_date_str, timing, spot_price):
         return None
     try:
         stock = yf.Ticker(_yf_symbol(ticker))
+        throttle_yfinance()
         expirations = stock.options
         if not expirations:
             return None
@@ -310,6 +314,7 @@ def compute_implied_move_live(ticker, report_date_str, timing, spot_price):
             return None
         expiration = usable[0]
 
+        throttle_yfinance()
         chain = stock.option_chain(expiration)
         calls, puts = chain.calls, chain.puts
         if calls.empty or puts.empty:
@@ -507,6 +512,7 @@ def get_upcoming_earnings_date(ticker):
         return None, None
     try:
         stock = yf.Ticker(_yf_symbol(ticker))
+        throttle_yfinance()
         raw = stock.get_earnings_dates(limit=4)
         if raw is None or raw.empty:
             return None, None
