@@ -2,6 +2,7 @@ import { HashRouter, Routes, Route } from "react-router-dom";
 import MarketOverview from "./pages/MarketOverview";
 import SectorRegulatory from "./pages/SectorRegulatory";
 import TickerAnalysis from "./pages/TickerAnalysis";
+import ETFBacktestScreener from "./pages/ETFBacktestScreener";
 import System from "./pages/System";
 
 export default function App() {
@@ -12,6 +13,7 @@ export default function App() {
         <Route path="/regulatory" element={<SectorRegulatory />} />
         <Route path="/analysis" element={<TickerAnalysis />} />
         <Route path="/analysis/:ticker" element={<TickerAnalysis />} />
+        <Route path="/etf-backtest" element={<ETFBacktestScreener />} />
         <Route path="/system" element={<System />} />
       </Routes>
     </HashRouter>

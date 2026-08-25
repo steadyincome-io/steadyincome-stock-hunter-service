@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS congress_trades (
     trade_date DATE
 );
 
+CREATE TABLE IF NOT EXISTS dividend_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    ex_date DATE NOT NULL,
+    amount_per_share REAL NOT NULL,
+    FOREIGN KEY(ticker) REFERENCES universe(ticker),
+    UNIQUE(ticker, ex_date)
+);
+
 CREATE TABLE IF NOT EXISTS sec_financials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker TEXT NOT NULL,
@@ -354,6 +363,16 @@ def migrate_db(db_path=DB_NAME):
                 currency TEXT,
                 FOREIGN KEY(ticker) REFERENCES universe(ticker),
                 UNIQUE(ticker, filing_date, holding_name, cusip, isin)
+            )
+        """),
+        ("dividend_history", """
+            CREATE TABLE IF NOT EXISTS dividend_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                ex_date DATE NOT NULL,
+                amount_per_share REAL NOT NULL,
+                FOREIGN KEY(ticker) REFERENCES universe(ticker),
+                UNIQUE(ticker, ex_date)
             )
         """),
     ]

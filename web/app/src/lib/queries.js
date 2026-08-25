@@ -169,6 +169,34 @@ export const QUERIES = {
     LIMIT ?
   `,
 
+  // ---- ETF Backtest Screener (new) ------------------------------------------
+  etfBacktestList: `
+    SELECT
+      u.ticker, u.name, u.market_cap,
+      ds.price, ds.high_52w, ds.low_52w, ds.current_drawdown_pct, ds.updated_at,
+      dsum.completed_drawdowns, dsum.drawdowns_over_10pct, dsum.drawdowns_over_20pct,
+      dsum.drawdowns_over_30pct, dsum.worst_drawdown_pct, dsum.avg_recovery_days
+    FROM universe u
+    JOIN daily_snapshot ds ON ds.ticker = u.ticker
+    LEFT JOIN drawdown_summary dsum ON dsum.ticker = u.ticker
+    WHERE u.asset_type = 'ETF' AND u.status = 'active' AND ds.price IS NOT NULL
+    ORDER BY ds.current_drawdown_pct ASC
+  `,
+  // Exact date/price of the trailing-252-trading-day low -- daily_snapshot.low_52w
+  // only stores the price, not when it happened, and "recent 52-week low" needs
+  // the date to compute a $10k-invested-then return.
+  etf52wLowDate: `
+    SELECT trade_date, close_price FROM (
+      SELECT trade_date, close_price
+      FROM price_history
+      WHERE ticker = ?
+      ORDER BY trade_date DESC
+      LIMIT 252
+    )
+    ORDER BY close_price ASC, trade_date ASC
+    LIMIT 1
+  `,
+
   // ---- System (pipeline run history) ---------------------------------------
   pipelineRuns: `
     SELECT run_id, run_timestamp, duration_seconds, tickers_processed, status, summary_json

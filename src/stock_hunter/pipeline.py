@@ -9,6 +9,7 @@ from .sec_edgar_worker import sync_sec_insider_data
 from .sec_etf_worker import sync_etf_reports
 from .sec_financials_worker import sync_10k_10q_financials, get_annual_revenue_history
 from .sec_eightk_worker import sync_8k_events
+from .dividend_worker import sync_dividend_history
 from .drawdown_analytics import compute_and_store_drawdowns, drawdown_opportunity_score
 from .distress_analytics import compute_distress, store_distress_score
 from .dcf_valuation import compute_dcf_fair_value, compute_base_growth_rate
@@ -857,6 +858,16 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
 
     conn.commit()
     progress(95, "Phase 4/5: market data/scoring complete")
+
+    # Step 4b: dividend/distribution history (stocks + ETFs alike). Cheap to
+    # re-run -- UNIQUE(ticker, ex_date) + INSERT OR IGNORE means only genuinely
+    # new payments get inserted on repeat runs.
+    step("Step 4b/5: syncing dividend history")
+    try:
+        sync_dividend_history(db_path)
+    except Exception as e:
+        error(f"Dividend history sync failed: {e}")
+    progress(97, "Phase 4b/5: dividend history synced")
 
     # Step 5: Record Pipeline Execution
     step("Step 5/5: writing pipeline run record")

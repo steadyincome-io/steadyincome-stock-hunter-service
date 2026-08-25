@@ -79,6 +79,14 @@ def _extract_nport_with_bs4(xml_text):
         return {}, []
 
     metrics = {}
+
+    # See parse_nport_xml's comment on why seriesId is required.
+    series_elem = _bs4_find_first(soup, "seriesId")
+    if series_elem is not None:
+        series_text = series_elem.get_text(strip=True)
+        if series_text:
+            metrics["series_id"] = series_text
+
     fund_info = _bs4_find_first(soup, "fundInfo")
     metric_map = {
         "total_assets": "totAssets",
@@ -170,24 +178,71 @@ def _extract_nport_with_bs4(xml_text):
     return metrics, holdings
 
 def fetch_sec_cik_mapping():
-    """Fetch official SEC EDGAR company tickers to CIK map."""
-    url = "https://www.sec.gov/files/company_tickers.json"
+    """Fetch official SEC EDGAR ticker-to-CIK maps: company_tickers.json (mostly
+    operating companies, i.e. 10-K/10-Q filers) merged with company_tickers_mf.json
+    (mutual funds/ETFs, keyed by ticker -> CIK/seriesId/classId). ETF tickers are
+    frequently absent from the first file entirely -- confirmed live: 49 of this
+    project's 53 ETF tickers (VTI, VOO, IVV, VXUS, BND, etc.) have zero entry in
+    company_tickers.json but a real CIK in company_tickers_mf.json. Without the
+    merge, sync_etf_reports silently skipped those 49 tickers every run (no CIK
+    found -> continue, with no log line at all for that case)."""
+    cik_map = {}
+
     try:
-        resp = rate_limited_get(url, headers=HEADERS, timeout=10)
+        resp = rate_limited_get("https://www.sec.gov/files/company_tickers.json", headers=HEADERS, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            cik_map = {}
             for item in data.values():
-                ticker = item['ticker'].upper()
-                cik = str(item['cik_str']).zfill(10)
-                cik_map[ticker] = cik
-            return cik_map
+                cik_map[item['ticker'].upper()] = str(item['cik_str']).zfill(10)
         else:
             warning(f"SEC CIK map fetch failed: {resp.status_code}")
-            return {}
     except Exception as e:
         error(f"SEC CIK map fetch failed: {e}")
-        return {}
+
+    try:
+        resp = rate_limited_get("https://www.sec.gov/files/company_tickers_mf.json", headers=HEADERS, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            fields = data.get("fields", [])
+            cik_idx = fields.index("cik") if "cik" in fields else 0
+            symbol_idx = fields.index("symbol") if "symbol" in fields else 3
+            for row in data.get("data", []):
+                ticker = str(row[symbol_idx]).upper()
+                # Don't let a fund ticker overwrite a real operating-company match
+                # already found above -- company_tickers.json is the more precise
+                # source when a ticker happens to exist in both.
+                cik_map.setdefault(ticker, str(row[cik_idx]).zfill(10))
+        else:
+            warning(f"SEC mutual-fund CIK map fetch failed: {resp.status_code}")
+    except Exception as e:
+        error(f"SEC mutual-fund CIK map fetch failed: {e}")
+
+    return cik_map
+
+
+def fetch_sec_series_mapping():
+    """Ticker -> seriesId, from company_tickers_mf.json only (company_tickers.json
+    has no series concept -- it's for single-series operating-company filers).
+    Used to verify each fetched N-PORT filing's own <seriesId> actually matches
+    the ticker being processed, since many tickers share one CIK (see
+    parse_nport_xml's comment) -- a ticker with no entry here (e.g. SPY, QQQ,
+    GLD, IAU, which each have their own dedicated single-series trust CIK) has
+    no ambiguity to check and every filing under its CIK is safely its own."""
+    series_map = {}
+    try:
+        resp = rate_limited_get("https://www.sec.gov/files/company_tickers_mf.json", headers=HEADERS, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            fields = data.get("fields", [])
+            series_idx = fields.index("seriesId") if "seriesId" in fields else 1
+            symbol_idx = fields.index("symbol") if "symbol" in fields else 3
+            for row in data.get("data", []):
+                series_map[str(row[symbol_idx]).upper()] = row[series_idx]
+        else:
+            warning(f"SEC mutual-fund series map fetch failed: {resp.status_code}")
+    except Exception as e:
+        error(f"SEC mutual-fund series map fetch failed: {e}")
+    return series_map
 
 def fetch_nport_ncen_filings(ticker, cik_str, years_back=2):
     """Fetch N-PORT and N-CEN filings for an ETF from SEC EDGAR."""
@@ -263,10 +318,21 @@ def parse_nport_xml(xml_text):
     
     # Define namespace - based on our analysis, this is the correct namespace
     ns = {'n': 'http://www.sec.gov/edgar/nport'}
-    
+
     # Extract key metrics
     metrics = {}
-    
+
+    # seriesId identifies which specific fund within the filer's CIK this filing
+    # is for -- required because many fund families (Vanguard, iShares, Schwab,
+    # etc.) register dozens of separate ETFs under ONE shared trust CIK. Without
+    # this, every N-PORT filing under that CIK looks like it belongs to whichever
+    # ticker happened to be queried, silently cross-contaminating holdings across
+    # unrelated funds (confirmed live: VTI's stored filings included the actual
+    # 500 Index Fund's and Small-Cap Value Fund's data, not just VTI's own).
+    series_elem = root.find('.//n:genInfo/n:seriesId', ns)
+    if series_elem is not None and series_elem.text:
+        metrics['series_id'] = series_elem.text.strip()
+
     # Try to find fundInfo section which contains the financial data
     fund_info = None
     # Try with namespace first
@@ -543,12 +609,15 @@ def sync_etf_reports(db_path="drawdown_analyzer.db", years_back=2):
     else:
         success("Database schema is up to date")
     
-    # Get CIK mapping
+    # Get CIK mapping, plus per-ticker expected seriesId (see parse_nport_xml's
+    # comment) so a filing under a shared multi-fund CIK can be rejected if it
+    # doesn't actually belong to the ticker being processed.
     cik_map = fetch_sec_cik_mapping()
     if not cik_map:
         warning("SEC CIK map unavailable")
         return 0
-    
+    series_map = fetch_sec_series_mapping()
+
     # Connect to database
     import sqlite3
     conn = sqlite3.connect(db_path, timeout=30)
@@ -570,7 +639,8 @@ def sync_etf_reports(db_path="drawdown_analyzer.db", years_back=2):
         cik = cik_map.get(clean_ticker)
         if not cik:
             continue
-        
+        expected_series = series_map.get(clean_ticker)
+
         # Check what we already have for this ticker
         cursor.execute("""
             SELECT accession_number FROM sec_etf_reports WHERE ticker = ?
@@ -599,7 +669,23 @@ def sync_etf_reports(db_path="drawdown_analyzer.db", years_back=2):
             
             # Parse the filing
             metrics, holdings = fetch_and_parse_etf_filing(f['report_url'], form_type)
-            
+
+            # Reject filings that belong to a DIFFERENT fund under the same
+            # shared CIK (see parse_nport_xml's comment) -- e.g. VTI and VOO
+            # share CIK 36405, so naively fetching "all filings for this CIK"
+            # would attribute VOO's own N-PORT filings to VTI too. Only checked
+            # when we have both an expected series (ticker is a fund with
+            # siblings under one CIK) and an actual one parsed from this filing;
+            # single-series trusts (SPY, QQQ, GLD, IAU) have no expected_series
+            # and are unaffected.
+            actual_series = metrics.get('series_id')
+            if expected_series and actual_series and actual_series != expected_series:
+                warning(
+                    f"{ticker}: skipping {form_type} {accn} -- belongs to a different "
+                    f"fund under the same CIK (series {actual_series}, expected {expected_series})"
+                )
+                continue
+
             # Insert into sec_etf_reports
             try:
                 cursor.execute("""
