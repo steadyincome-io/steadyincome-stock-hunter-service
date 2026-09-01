@@ -97,8 +97,17 @@ MAX_LOSS_DOLLARS_CAP = None
 # reporting a dead $0 premium, _walk_to_viable_strike steps one strike at a
 # time toward the money (never crossing into it) until the bid clears this
 # floor (as a fraction of the strike price), or the money is reached first.
-MIN_PREMIUM_PCT_OF_STRIKE = 0.001  # 0.1% of strike -- floor for "worth collecting"
+MIN_PREMIUM_PCT_OF_STRIKE = 0.005  # 0.5% of strike (the ROI% column) -- floor for "worth collecting"
 MAX_STRIKE_WALK_STEPS = 15
+
+# ---- expiration window (weekly-style single-leg trades) -------------------
+# 10 days is the soft/preferred target; 4 and 20 are the hard floor/ceiling.
+# Widened from a flat 4-10 day window so a ticker whose near-term expirations
+# all price too thin (see MIN_PREMIUM_PCT_OF_STRIKE) can retry a later
+# expiration's larger premium instead of being dropped outright.
+SOFT_TARGET_DAYS = 10
+MIN_DTE_DAYS = 4
+MAX_DTE_DAYS = 20
 
 # ---- trend filter -------------------------------------------------------
 # Require price above its trailing SMA for bullish/neutral strategies (you
@@ -148,10 +157,10 @@ FOMC_MEETING_DATES = {
     date(2027, 1, 27), date(2027, 3, 17), date(2027, 4, 28), date(2027, 6, 9),
     date(2027, 7, 28), date(2027, 9, 15), date(2027, 10, 27), date(2027, 12, 8),
 }
-# Matches _find_weekly_expiration's 4-10-day target window -- a meeting
-# further out than the widest weekly expiration this screener would pick
-# isn't actually inside any option's life yet.
-FOMC_LOOKAHEAD_DAYS = 10
+# Matches _find_weekly_expiration's MIN_DTE_DAYS-MAX_DTE_DAYS window -- a
+# meeting further out than the widest weekly expiration this screener would
+# pick isn't actually inside any option's life yet.
+FOMC_LOOKAHEAD_DAYS = MAX_DTE_DAYS
 
 # ---- day-of-week entry backtest (informational, opt-in) -------------------
 # yfinance only provides intraday bars for the trailing ~60 days, so a 5-year
@@ -579,19 +588,36 @@ def fetch_recent_news_headlines(ticker, limit=NEWS_HEADLINE_COUNT):
         return ""
 
 
-def _find_weekly_expiration(stock):
-    """Nearest expiration 4-10 days out. Returns (exp_str, days_out) or (None, None)."""
+def _find_weekly_expiration(stock, soft_target_days=SOFT_TARGET_DAYS, min_days=MIN_DTE_DAYS, max_days=MAX_DTE_DAYS):
+    """Single best expiration: closest to soft_target_days, within [min_days, max_days].
+    Returns (exp_str, days_out) or (None, None). Kept for callers (e.g.
+    put_credit_spread) that only ever try one expiration; single-leg strategies
+    use _candidate_weekly_expirations instead so a thin-premium reject at the
+    soft target can retry a later date instead of failing the ticker outright."""
+    candidates = _candidate_weekly_expirations(stock, soft_target_days, min_days, max_days)
+    return candidates[0] if candidates else (None, None)
+
+
+def _candidate_weekly_expirations(stock, soft_target_days=SOFT_TARGET_DAYS, min_days=MIN_DTE_DAYS, max_days=MAX_DTE_DAYS):
+    """All expirations within [min_days, max_days], nearest-to-soft_target_days
+    first. 10 days is the soft/preferred target (best liquidity/theta decay
+    trade-off for a 'weekly'); 20 is the strict outer limit -- widened from a
+    flat 4-10 so a ticker whose nearby expirations all price too thin (see
+    MIN_PREMIUM_PCT_OF_STRIKE) can fall back to a later date's larger premium
+    instead of being dropped outright."""
     throttle_yfinance()
     expirations = stock.options
     if not expirations:
-        return None, None
+        return []
     today = datetime.now().date()
+    in_range = []
     for exp_str in expirations:
         exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
         days_out = (exp_date - today).days
-        if 4 <= days_out <= 10:
-            return exp_str, days_out
-    return None, None
+        if min_days <= days_out <= max_days:
+            in_range.append((exp_str, days_out))
+    in_range.sort(key=lambda pair: abs(pair[1] - soft_target_days))
+    return in_range
 
 
 def _pick_strike_near_target(table, target_price):
@@ -647,7 +673,9 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                                   min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE,
                                   expected_move_width_fraction=EXPECTED_MOVE_WIDTH_FRACTION,
                                   max_loss_dollars=MAX_LOSS_DOLLARS_CAP):
-    """Pick the nearest expiration (target ~4-10 days out for a 'weekly').
+    """Pick an expiration near SOFT_TARGET_DAYS out for a 'weekly' (single-leg
+    strategies retry later expirations up to MAX_DTE_DAYS if the closer ones
+    all fail the ROI floor; put_credit_spread tries only the single nearest one).
 
     For single-leg strategies (cash_secured_put, covered_call), targets a
     strike out-of-the-money by `short_otm_pct` (below current price for puts,
@@ -672,9 +700,84 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
     option_side = strategy["option_side"]
     try:
         stock = yf.Ticker(_yf_symbol(ticker))
+
+        if strategy_key != "put_credit_spread":
+            # Single-leg: try candidate expirations nearest-to-soft-target
+            # first, falling back to a later one (up to MAX_DTE_DAYS) if the
+            # closer ones all fail the ROI floor -- see _candidate_weekly_expirations.
+            candidates = _candidate_weekly_expirations(stock)
+            if not candidates:
+                return None, f"No weekly expiration ({MIN_DTE_DAYS}-{MAX_DTE_DAYS} days out) available"
+
+            last_reason = None
+            for exp_idx, (target_exp, target_days) in enumerate(candidates):
+                throttle_yfinance()
+                chain = stock.option_chain(target_exp)
+                table = chain.puts if option_side == "puts" else chain.calls
+                if table.empty:
+                    last_reason = f"No {option_side} contracts available for {target_exp}"
+                    continue
+                table = table.sort_values("strike").reset_index(drop=True)
+
+                short_target_price = current_price * (1 - short_otm_pct) if option_side == "puts" else current_price * (1 + short_otm_pct)
+                contract, otm_pct_used, steps_walked = _walk_to_viable_strike(
+                    table, current_price, option_side, short_otm_pct,
+                    min_premium_pct_of_strike=min_premium_pct_of_strike,
+                )
+                if contract is None:
+                    last_reason = (
+                        f"No strike between {short_otm_pct * 100:.1f}% OTM and the money cleared the "
+                        f"{min_premium_pct_of_strike * 100:.2f}%-of-strike (ROI) floor at {target_exp} ({target_days}d)"
+                    )
+                    continue
+
+                contract_oi = int(contract["openInterest"]) if pd.notna(contract["openInterest"]) else 0
+                if contract_oi < min_open_interest:
+                    last_reason = f"Open interest too thin at {target_exp}: {contract_oi} (minimum {min_open_interest} required)"
+                    continue
+
+                iv_pct = float(contract["impliedVolatility"]) * 100 if pd.notna(contract["impliedVolatility"]) else None
+                iv_premium_pct = (iv_pct - realized_vol_pct) if (iv_pct is not None and realized_vol_pct is not None) else None
+                strike = float(contract["strike"])
+                confidence_pct = probability_finishes_otm(option_side, current_price, strike, target_days, iv_pct, risk_free_rate)
+
+                bid = float(contract["bid"]) if pd.notna(contract["bid"]) else 0.0
+                ask = float(contract["ask"]) if pd.notna(contract["ask"]) else 0.0
+                mid = (bid + ask) / 2 if (bid or ask) else 0.0
+                spread_pct = ((ask - bid) / mid * 100) if mid else None
+
+                premium = round(bid, 2)
+                breakeven = round(strike - premium, 2) if option_side == "puts" else round(strike + premium, 2)
+                roi_pct = round((premium / strike) * 100, 3) if strike else None
+
+                return {
+                    "expiration": target_exp,
+                    "days_to_expiration": target_days,
+                    "strike": strike,
+                    "bid": bid,
+                    "ask": ask,
+                    "premium": premium,
+                    "mid_price": round(mid, 2),
+                    "breakeven": breakeven,
+                    "roi_pct": roi_pct,
+                    "confidence_pct": confidence_pct,
+                    "implied_volatility_pct": round(iv_pct, 1) if iv_pct is not None else None,
+                    "iv_premium_vs_realized_pct": round(iv_premium_pct, 1) if iv_premium_pct is not None else None,
+                    "open_interest": contract_oi,
+                    "volume": int(contract["volume"]) if pd.notna(contract["volume"]) else 0,
+                    "bid_ask_spread_pct": round(spread_pct, 1) if spread_pct is not None else None,
+                    "otm_pct_used": round(otm_pct_used * 100, 1),
+                    "otm_pct_requested": round(short_otm_pct * 100, 1),
+                    "strike_walk_steps": steps_walked,
+                    "expiration_walk_steps": exp_idx,
+                }, None
+
+            warning(f"{ticker}: {last_reason or 'no viable single-leg contract found in the expiration window'}")
+            return None, last_reason or "No viable contract found in the expiration window"
+
         target_exp, target_days = _find_weekly_expiration(stock)
         if target_exp is None:
-            return None, "No weekly expiration (4-10 days out) available"
+            return None, f"No weekly expiration ({MIN_DTE_DAYS}-{MAX_DTE_DAYS} days out) available"
 
         throttle_yfinance()
         chain = stock.option_chain(target_exp)
@@ -816,67 +919,9 @@ def fetch_weekly_option_snapshot(ticker, current_price, strategy_key, realized_v
                 "trimmed_for_max_loss_cap": trimmed_for_max_loss_cap,
             }, None
 
-        # Single-leg strategies (cash_secured_put, covered_call): short_otm_pct
-        # is only a starting point -- walk toward the money if that strike's
-        # bid is dead or too thin to be worth collecting (see
-        # _walk_to_viable_strike and MIN_PREMIUM_PCT_OF_STRIKE above).
-        contract, otm_pct_used, steps_walked = _walk_to_viable_strike(
-            table, current_price, option_side, short_otm_pct,
-            min_premium_pct_of_strike=min_premium_pct_of_strike,
-        )
-        if contract is None:
-            reason = (
-                f"No strike between {short_otm_pct * 100:.1f}% OTM and the money cleared the "
-                f"{min_premium_pct_of_strike * 100:.2f}%-of-strike minimum premium floor"
-            )
-            warning(f"{ticker}: {reason}")
-            return None, reason
-
-        contract_oi = int(contract["openInterest"]) if pd.notna(contract["openInterest"]) else 0
-        if contract_oi < min_open_interest:
-            reason = f"Open interest too thin: {contract_oi} (minimum {min_open_interest} required)"
-            warning(f"{ticker}: {reason}")
-            return None, reason
-
-        iv_pct = float(contract["impliedVolatility"]) * 100 if pd.notna(contract["impliedVolatility"]) else None
-        iv_premium_pct = (iv_pct - realized_vol_pct) if (iv_pct is not None and realized_vol_pct is not None) else None
-        strike = float(contract["strike"])
-        confidence_pct = probability_finishes_otm(option_side, current_price, strike, target_days, iv_pct, risk_free_rate)
-
-        bid = float(contract["bid"]) if pd.notna(contract["bid"]) else 0.0
-        ask = float(contract["ask"]) if pd.notna(contract["ask"]) else 0.0
-        mid = (bid + ask) / 2 if (bid or ask) else 0.0
-        spread_pct = ((ask - bid) / mid * 100) if mid else None
-
-        # Primary: the bid, same conservative-fill philosophy as
-        # put_credit_spread's net_credit -- as the seller, the bid is the
-        # price a buyer is currently offering, i.e. what you could
-        # realistically collect on a marketable order right now. The ask is
-        # what OTHER sellers are asking, not a price you're likely to get
-        # filled at yourself. mid_price is kept only as a secondary,
-        # best-case reference, same role mid_credit plays for spreads.
-        premium = round(bid, 2)
-        breakeven = round(strike - premium, 2) if option_side == "puts" else round(strike + premium, 2)
-
-        return {
-            "expiration": target_exp,
-            "days_to_expiration": target_days,
-            "strike": strike,
-            "bid": bid,
-            "ask": ask,
-            "premium": premium,
-            "mid_price": round(mid, 2),
-            "breakeven": breakeven,
-            "confidence_pct": confidence_pct,
-            "implied_volatility_pct": round(iv_pct, 1) if iv_pct is not None else None,
-            "iv_premium_vs_realized_pct": round(iv_premium_pct, 1) if iv_premium_pct is not None else None,
-            "open_interest": contract_oi,
-            "volume": int(contract["volume"]) if pd.notna(contract["volume"]) else 0,
-            "bid_ask_spread_pct": round(spread_pct, 1) if spread_pct is not None else None,
-            "otm_pct_used": round(otm_pct_used * 100, 1),
-            "otm_pct_requested": round(short_otm_pct * 100, 1),
-            "strike_walk_steps": steps_walked,
-        }, None
+        # Single-leg strategies (cash_secured_put, covered_call) never reach
+        # here -- they return earlier via the multi-expiration loop above.
+        raise AssertionError(f"unreachable: strategy_key={strategy_key!r} should have returned earlier")
     except Exception as exc:
         warning(f"{ticker}: option chain lookup failed: {exc}")
         return None, f"Option chain lookup failed: {exc}"
@@ -901,18 +946,23 @@ def compute_realized_volatility_pct(conn, ticker, lookback_days=30):
 
 
 def _expiration_for_entry_date(entry_date):
-    """Nearest Friday that would be a valid 'weekly' expiration under the same
-    4-10-day window _find_weekly_expiration uses live -- e.g. a Tuesday entry
-    (Friday only 3 days out) rolls to the following Friday (10 days out),
-    matching how the live screener would actually roll to next week's
-    expiration rather than picking one that's too close."""
-    for days_ahead in range(1, 15):
+    """Nearest-to-SOFT_TARGET_DAYS Friday that would be a valid 'weekly'
+    expiration under the same MIN_DTE_DAYS-MAX_DTE_DAYS window
+    _find_weekly_expiration uses live -- e.g. a Tuesday entry (Friday only 3
+    days out) rolls to the following Friday, matching how the live screener
+    would actually roll to next week's expiration rather than picking one
+    that's too close."""
+    candidates = []
+    for days_ahead in range(1, MAX_DTE_DAYS + 5):
         candidate = entry_date + timedelta(days=days_ahead)
         if candidate.weekday() == 4:  # Friday
             days_out = (candidate - entry_date).days
-            if 4 <= days_out <= 10:
-                return candidate
-    return None
+            if MIN_DTE_DAYS <= days_out <= MAX_DTE_DAYS:
+                candidates.append((candidate, days_out))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda pair: abs(pair[1] - SOFT_TARGET_DAYS))
+    return candidates[0][0]
 
 
 def backtest_day_of_week_breach(ticker, option_side, otm_pct, lookback_years=DAY_OF_WEEK_BACKTEST_YEARS):
@@ -1049,22 +1099,23 @@ def diversify_by_correlation(ranked_tickers, returns_df, max_picks, max_correlat
 
 # ---- return_potential annualization ----------------------------------------
 # Raw yield alone silently favors whichever DTE a candidate happened to land
-# on -- the weekly expiration target ranges 4-10 days out
-# (_find_weekly_expiration), so two candidates with identical raw yield but
-# different DTE within that window aren't actually equally good: the
-# shorter-dated one earns the same return in less time, i.e. capital could be
-# redeployed sooner. compute_edge_score annualizes before scoring
-# (raw_pct * 365 / days_to_expiration), the same normalization "annualized
-# return" generally means in options screening, so a 4-day and a 10-day
-# candidate are genuinely comparable instead of the score being blind to DTE.
+# on -- the weekly expiration window now ranges MIN_DTE_DAYS-MAX_DTE_DAYS days
+# out (_find_weekly_expiration/_candidate_weekly_expirations), so two
+# candidates with identical raw yield but different DTE within that window
+# aren't actually equally good: the shorter-dated one earns the same return in
+# less time, i.e. capital could be redeployed sooner. compute_edge_score
+# annualizes before scoring (raw_pct * 365 / days_to_expiration), the same
+# normalization "annualized return" generally means in options screening, so a
+# 4-day and a 20-day candidate are genuinely comparable instead of the score
+# being blind to DTE.
 #
 # The two raw-yield thresholds below (used pre-annualization, one for
 # spreads' return-on-risk%, one for single-leg premium-as-%-of-strike) are
-# scaled by 365/7 (7 = the midpoint of the 4-10 day window) so a "typical"
-# weekly candidate still lands near the same score as before this change --
-# not a silent re-calibration of what counts as a good return, just removing
-# the DTE-blindness.
-RETURN_ANNUALIZATION_REFERENCE_DAYS = 7
+# scaled by 365/SOFT_TARGET_DAYS (the preferred/typical DTE, not the window's
+# flat midpoint) so a "typical" weekly candidate still lands near the same
+# score as before this change -- not a silent re-calibration of what counts
+# as a good return, just removing the DTE-blindness.
+RETURN_ANNUALIZATION_REFERENCE_DAYS = SOFT_TARGET_DAYS
 RETURN_ON_RISK_PCT_THRESHOLD_RAW = 50.0
 PREMIUM_PCT_OF_STRIKE_THRESHOLD_RAW = 3.0
 RETURN_ON_RISK_ANNUALIZED_THRESHOLD = RETURN_ON_RISK_PCT_THRESHOLD_RAW * 365 / RETURN_ANNUALIZATION_REFERENCE_DAYS
@@ -1531,6 +1582,21 @@ def _print_strike_walk_detail(candidates):
         )
 
 
+def _print_expiration_walk_detail(candidates):
+    """Single-leg only: notes which candidates didn't use the expiration
+    nearest SOFT_TARGET_DAYS because every strike there (even after walking
+    toward the money) still failed the ROI floor, so a later expiration (up
+    to MAX_DTE_DAYS out) was tried instead -- see _candidate_weekly_expirations."""
+    walked = [r for r in candidates if (r.get("expiration_walk_steps") or 0) > 0]
+    if not walked:
+        return
+    print()
+    print(f"Expiration walk-in (nearest {SOFT_TARGET_DAYS}-day expiration's premium too thin even after strike walk-in,")
+    print("tried a later expiration instead):")
+    for r in walked:
+        print(f"  {r['ticker']}: used {r['expiration']} ({r['days_to_expiration']}d out, {r['expiration_walk_steps']} expiration(s) further out)")
+
+
 def _print_day_of_week_backtest(candidates):
     """Only present when --show-day-of-week-backtest was passed (see
     backtest_day_of_week_breach for what this does and does not measure)."""
@@ -1561,12 +1627,13 @@ def _print_single_leg_report(candidates, strategy_key):
     header = (
         f"{'Ticker':<8}{'Edge':>7}  {'Sector':<16}{'Price':>9}{'Qual':>6}{'Risk':>6}"
         f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}{'ShortFlt%':>10}"
-        f"{'Exp':>12}{'Strike':>8}{'Premium':>8}{'Mid':>7}{'BrkEven':>9}"
-        f"{'IV%':>7}{'RV%':>7}{'IVprem':>8}{'ProbOTM%':>9}{'OI':>7}"
+        f"{'Exp':>12}{'Strike':>8}{'Premium':>8}{'ROI%':>7}{'Mid':>7}{'BrkEven':>9}"
+        f"{'IV%':>7}{'RV%':>7}{'IVprem':>8}{'ProbOTM%':>9}{'OI':>7}{'Sentiment':>10}"
     )
     print(header)
     print("-" * len(header))
     for r in candidates:
+        sentiment = (r.get("news_sentiment") or {}).get("sentiment", "--")
         print(
             f"{_ticker_label(r):<8}{(r.get('edge_score') if r.get('edge_score') is not None else 0):>7.1f}  "
             f"{(r['sector'] or '')[:14]:<16}{r['price']:>9.2f}"
@@ -1576,10 +1643,12 @@ def _print_single_leg_report(candidates, strategy_key):
             f"{(r.get('pct_above_52w_low') if r.get('pct_above_52w_low') is not None else 0):>10.1f}"
             f"{(r.get('insider_sellers') or 0):>9}{_format_insider_value_m(r):>9.1f}"
             f"{_format_concentration_risk(r):>9}{_format_short_interest(r):>10}"
-            f"{r['expiration']:>12}{r['strike']:>8.1f}{r['premium']:>8.2f}{r['mid_price']:>7.2f}{r['breakeven']:>9.2f}"
+            f"{r['expiration']:>12}{r['strike']:>8.1f}{r['premium']:>8.2f}{(r.get('roi_pct') or 0):>7.2f}"
+            f"{r['mid_price']:>7.2f}{r['breakeven']:>9.2f}"
             f"{(r.get('implied_volatility_pct') or 0):>7.1f}{(r.get('realized_volatility_pct') or 0):>7.1f}"
             f"{(r.get('iv_premium_vs_realized_pct') or 0):>8.1f}"
             f"{(r.get('confidence_pct') if r.get('confidence_pct') is not None else 0):>9.1f}{(r.get('open_interest') or 0):>7}"
+            f"{sentiment:>10}"
         )
     print()
     print("Edge = composite 0-100 ranking score (this table's sort order) blending ProbOTM%, quality_score,")
@@ -1597,16 +1666,23 @@ def _print_single_leg_report(candidates, strategy_key):
     print("informational only for cash_secured_put, since the same squeeze would push price away from that strike.")
     print("Premium = bid price at a realistic fill (what a buyer is currently offering, i.e. what you as the")
     print("seller could realistically collect right now) -- the primary, conservative figure, same philosophy")
-    print("as put_credit_spread's Credit. Mid = mid-to-mid price, shown only as an upside reference, not what")
-    print("you should plan around. BrkEven = strike - Premium (puts) or strike + Premium (calls).")
+    print("as put_credit_spread's Credit. ROI% = Premium / Strike x 100 -- the actual return on the cash/stock")
+    print(f"backing this trade (collateral = strike x 100 x qty), gated at a {MIN_PREMIUM_PCT_OF_STRIKE * 100:.2f}% floor")
+    print("(--min-premium-pct-of-strike): candidates below it are walked to a closer strike and/or a later")
+    print(f"expiration (up to {MAX_DTE_DAYS} days out, see Exp) before being dropped, rather than shown with a")
+    print("near-zero premium. Mid = mid-to-mid price, shown only as an upside reference, not what you should")
+    print("plan around. BrkEven = strike - Premium (puts) or strike + Premium (calls).")
     print("ProbOTM% = Black-Scholes model estimate of the probability this strike finishes out-of-the-money at")
     print("expiration (using the contract's own implied volatility) -- a model estimate, not a guarantee.")
     print("OI = open interest for this specific contract (not daily volume) -- already cleared --min-open-interest.")
+    print("Sentiment = LLM-derived recent-news sentiment (positive/neutral/negative) via score_news_sentiment --")
+    print("informational only, not factored into Edge Score; see the detail section below for the summary/themes.")
     if any(r.get("price_source", "live") != "live" for r in candidates):
         print("* price is the stored daily_snapshot value, not a live quote (yfinance fetch failed for this ticker).")
     _print_concentration_detail(candidates)
     _print_short_squeeze_detail(candidates, strategy_key)
     _print_strike_walk_detail(candidates)
+    _print_expiration_walk_detail(candidates)
     _print_dcf_detail(candidates)
     _print_news_sentiment_detail(candidates)
     _print_day_of_week_backtest(candidates)
@@ -1755,9 +1831,11 @@ if __name__ == "__main__":
     parser.add_argument("--min-open-interest", type=int, default=MIN_OPEN_INTEREST,
                          help="Minimum open interest required on every leg (liquidity floor)")
     parser.add_argument("--min-premium-pct-of-strike", type=float, default=MIN_PREMIUM_PCT_OF_STRIKE,
-                         help="cash_secured_put/covered_call only: --short-otm-pct is just a starting point -- if "
-                              "that strike's bid is dead or below this fraction of the strike price, walk toward "
-                              "the money (never past it) until a strike clears this floor (default 0.001 = 0.1%%)")
+                         help="cash_secured_put/covered_call only: this is also the ROI%% column/floor -- if the "
+                              "--short-otm-pct strike's bid is dead or below this fraction of the strike price "
+                              "(ROI), walk toward the money (never past it), then try a later expiration (up to "
+                              "MAX_DTE_DAYS out) if no strike at the current one clears it either "
+                              "(default 0.005 = 0.5%%)")
     parser.add_argument("--show-rejected", action=argparse.BooleanOptionalAction, default=True,
                          help="Print a table of every filtered-out ticker and why (default: on)")
     parser.add_argument("--show-day-of-week-backtest", action=argparse.BooleanOptionalAction, default=True,

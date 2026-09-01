@@ -196,6 +196,13 @@ export const QUERIES = {
     ORDER BY close_price ASC, trade_date ASC
     LIMIT 1
   `,
+  // Total per-share dividends/distributions paid between the 52w-low date and
+  // now -- multiplied by shares held (10000/lowPrice) in JS to get $ earned.
+  dividendsBetween: `
+    SELECT SUM(amount_per_share) AS total_per_share
+    FROM dividend_history
+    WHERE ticker = ? AND ex_date >= ? AND ex_date <= ?
+  `,
 
   // ---- System (pipeline run history) ---------------------------------------
   pipelineRuns: `

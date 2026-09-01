@@ -46,3 +46,6 @@ infra/terraform/.build/
 infra/terraform/*.tfstate
 infra/terraform/*.tfstate.backup
 infra/terraform/*.tfplan
+
+designs*
+trades*

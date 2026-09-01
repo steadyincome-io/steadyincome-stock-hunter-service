@@ -4,6 +4,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Market", icon: "show_chart" },
   { to: "/analysis", label: "Analysis", icon: "analytics" },
   { to: "/etf-backtest", label: "ETF Backtest", icon: "history" },
+  { to: "/wheel-tracker", label: "Wheel Tracker", icon: "sync" },
   { to: "/regulatory", label: "Regulatory", icon: "gavel" },
   { to: "/system", label: "System", icon: "settings_heart" },
 ];

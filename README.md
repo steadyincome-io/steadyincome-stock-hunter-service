@@ -682,9 +682,13 @@ What it does, in order (this is the actual execution order -- the code's own ste
 3. **Earnings exclusion** -- drops any candidate with an earnings date (via `yfinance`'s calendar)
    inside the next 7 days, since an earnings print is the most common way a short-dated premium trade
    blows up.
-4. **Options chain check** -- pulls the nearest ~1-week expiration (4-10 days out) via `yfinance`, then:
+4. **Options chain check** -- pulls an expiration near a 10-day soft target (4-20 days out) via
+   `yfinance`, then:
    - **cash_secured_put / covered_call** (single leg): picks a strike `--short-otm-pct` (default 5%)
      out-of-the-money -- below current price for puts, above for calls -- rather than at-the-money.
+     If no strike there clears `--min-premium-pct-of-strike` (the ROI%% floor, default 0.5%) even after
+     walking toward the money, retries a later expiration (up to 20 days out) before giving up on the
+     ticker entirely.
    - **put_credit_spread** (two legs): sells that same OTM strike, then buys a further-out-of-the-money
      protective put -- how far is sized **dynamically off the short leg's own IV**, not a fixed strike
      count (see "Dynamic spread width" below for the exact formula), then reports full spread
@@ -899,8 +903,8 @@ question with a real limitation: yfinance only provides intraday bars for the tr
 specific hour on a Tuesday three years ago. So this is a day-level approximation, not the literal
 "Tuesday 12-4pm vs. Wednesday 11am-4pm" comparison: for every historical Tuesday/Wednesday over the
 trailing 5 years, it sets a hypothetical short strike at `--short-otm-pct` from that day's close, finds
-the next weekly-style expiration (rolling to the following Friday if the immediate one would be <4 days
-out, mirroring `_find_weekly_expiration`'s live 4-10-day window), and checks whether the daily low (puts)
+the next weekly-style expiration (rolling to the following Friday nearest the 10-day soft target, within
+4-20 days out, mirroring `_find_weekly_expiration`'s live window), and checks whether the daily low (puts)
 or high (calls) breached that strike at any point before expiration. Runs only against final candidates
 (not the whole pool), so the added cost is small -- typically 3-10 extra yfinance history fetches per
 run, not hundreds. Disable with `--no-show-day-of-week-backtest` if you want to skip it.

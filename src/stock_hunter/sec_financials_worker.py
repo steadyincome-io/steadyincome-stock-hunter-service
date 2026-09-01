@@ -282,6 +282,18 @@ def _extract_numeric_fundamentals_from_companyfacts(ticker: str, cik_str: str, f
     result = {}
     for column, (tags, units) in fields.items():
         result[column] = _pick_fact_value(facts, tags, as_of_date=filing_date, units=units)
+
+    # Some filers (confirmed live: MCD) tag WeightedAverageNumberOfDilutedSharesOutstanding
+    # under the "shares" XBRL unit but with the value already expressed in millions (e.g.
+    # 711.1 instead of 711,100,000). No real public company has under 100k shares
+    # outstanding, so anything that small is a millions-scale value, not a raw share count --
+    # correcting it here prevents market_cap_usd (price * shares) from coming out ~1,000,000x
+    # too small, which otherwise blows up fcf_yield_pct/dividend_yield_pct into the millions of
+    # percent downstream in pipeline.py.
+    shares = result.get("shares_outstanding")
+    if shares is not None and 0 < shares < 100_000:
+        result["shares_outstanding"] = shares * 1_000_000
+
     return result
 
 
