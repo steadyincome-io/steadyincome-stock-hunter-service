@@ -112,7 +112,15 @@ MAX_DTE_DAYS = 20
 # ---- trend filter -------------------------------------------------------
 # Require price above its trailing SMA for bullish/neutral strategies (you
 # want the stock to stay flat-to-up), sourced from stored price_history.
+TREND_FAST_SMA_PERIOD = 20
 SMA_TREND_FILTER_PERIOD = 50
+# Pullback filter for bullish premium-selling entries:
+# prefer names that are currently pulling back toward 20DMA support rather
+# than names that have just run straight up and are extended.
+PULLBACK_LOOKBACK_DAYS = 10
+PULLBACK_DROP_MIN_PCT = 1.0
+PULLBACK_DROP_MAX_PCT = 3.0
+PULLBACK_SMA20_DISTANCE_MAX_PCT = 1.5
 
 # ---- probability-of-profit model -----------------------------------------
 # Approximate short-term risk-free rate used in the Black-Scholes probability
@@ -362,6 +370,103 @@ def compute_sma(conn, ticker, period=SMA_TREND_FILTER_PERIOD):
     return round(sum(closes) / len(closes), 2)
 
 
+def compute_trend_pullback_context(
+    conn,
+    ticker,
+    fast_period=TREND_FAST_SMA_PERIOD,
+    slow_period=SMA_TREND_FILTER_PERIOD,
+    pullback_lookback_days=PULLBACK_LOOKBACK_DAYS,
+):
+    """Returns a trend/pullback snapshot derived from stored price_history.
+
+    Trend states:
+      - green: price > 20DMA > 50DMA
+      - yellow: price > 50DMA but below 20DMA
+      - red: price < 50DMA
+
+    Pullback states:
+      - ready: trend is green, price pulled back 1-3% from the recent peak,
+        sits near 20DMA support, and has started to rebound
+      - extended: trend is green but the price is too far above 20DMA / the
+        recent pullback is too shallow
+      - wait: trend is yellow
+      - rejected: trend is red
+
+    Returns None when there isn't enough price history yet; callers should
+    fail open in that case so a young ticker isn't excluded solely for
+    missing trailing averages.
+    """
+    lookback = max(fast_period, slow_period, pullback_lookback_days)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT trade_date, close_price
+        FROM price_history
+        WHERE ticker = ?
+        ORDER BY trade_date DESC
+        LIMIT ?
+    """, (ticker, lookback))
+    closes = [float(row["close_price"]) for row in cursor.fetchall()]
+    if len(closes) < slow_period:
+        return None
+
+    latest = closes[0]
+    prev_close = closes[1] if len(closes) > 1 else latest
+    sma20 = round(sum(closes[:fast_period]) / fast_period, 2) if len(closes) >= fast_period else None
+    sma50 = round(sum(closes[:slow_period]) / slow_period, 2)
+    recent_peak = max(closes[:min(pullback_lookback_days, len(closes))])
+    pullback_drop_pct = round(((recent_peak - latest) / recent_peak) * 100, 1) if recent_peak else None
+    sma20_distance_pct = round(((latest - sma20) / sma20) * 100, 1) if sma20 else None
+    bullish_reversal = latest > prev_close
+
+    if latest > sma20 and sma20 > sma50:
+        trend_state = "green"
+        trend_label = "Green"
+    elif latest > sma50:
+        trend_state = "yellow"
+        trend_label = "Yellow"
+    else:
+        trend_state = "red"
+        trend_label = "Red"
+
+    if trend_state == "green":
+        in_pullback_band = (
+            pullback_drop_pct is not None
+            and PULLBACK_DROP_MIN_PCT <= pullback_drop_pct <= PULLBACK_DROP_MAX_PCT
+        )
+        near_sma20 = sma20_distance_pct is not None and abs(sma20_distance_pct) <= PULLBACK_SMA20_DISTANCE_MAX_PCT
+        if in_pullback_band and near_sma20 and bullish_reversal:
+            pullback_state = "ready"
+            pullback_label = "Ready"
+        elif pullback_drop_pct is not None and pullback_drop_pct < PULLBACK_DROP_MIN_PCT:
+            pullback_state = "extended"
+            pullback_label = "Extended"
+        elif pullback_drop_pct is not None and pullback_drop_pct > PULLBACK_DROP_MAX_PCT:
+            pullback_state = "wait"
+            pullback_label = "Deeper"
+        else:
+            pullback_state = "wait"
+            pullback_label = "Wait"
+    elif trend_state == "yellow":
+        pullback_state = "wait"
+        pullback_label = "Wait"
+    else:
+        pullback_state = "rejected"
+        pullback_label = "Reject"
+
+    return {
+        "sma20": sma20,
+        "sma50": sma50,
+        "trend_state": trend_state,
+        "trend_label": trend_label,
+        "pullback_state": pullback_state,
+        "pullback_label": pullback_label,
+        "pullback_drop_pct": pullback_drop_pct,
+        "sma20_distance_pct": sma20_distance_pct,
+        "recent_peak": recent_peak,
+        "bullish_reversal": bullish_reversal,
+    }
+
+
 def check_market_regime(conn, index_ticker=MARKET_INDEX_TICKER, sma_period=MARKET_SMA_PERIOD):
     """Gate the whole run, not a single ticker: is the broad market itself
     healthy enough to sell bullish/neutral premium into? Compares a live
@@ -444,14 +549,34 @@ def rank_and_filter_pool(conn, all_rows, avoid_list, strategy_key, pool_size, sm
             rejections[ticker] = f"Quality score {row['quality_score']} below strategy minimum {strategy['min_quality_score']}"
             continue
         if strategy["require_uptrend"]:
-            sma = compute_sma(conn, ticker, sma_period)
-            if sma is not None and row["price"] < sma:
-                rejections[ticker] = (
-                    f"Price ${row['price']:.2f} below {sma_period}-day SMA (${sma:.2f}) -- trend filter, "
-                    "not a confirmed uptrend"
-                )
-                continue
-            row["sma"] = sma
+            trend_ctx = compute_trend_pullback_context(conn, ticker, fast_period=TREND_FAST_SMA_PERIOD, slow_period=sma_period)
+            if trend_ctx is None:
+                row["trend_state"] = "unavailable"
+                row["trend_label"] = "N/A"
+                row["pullback_state"] = "unavailable"
+                row["pullback_label"] = "N/A"
+            else:
+                row.update(trend_ctx)
+                if trend_ctx["trend_state"] == "red":
+                    rejections[ticker] = (
+                        f"Price ${row['price']:.2f} below {sma_period}-day SMA (${trend_ctx['sma50']:.2f}) -- "
+                        "trend filter says don't sell put spreads"
+                    )
+                    continue
+                if trend_ctx["trend_state"] == "yellow":
+                    rejections[ticker] = (
+                        f"Price ${row['price']:.2f} above {sma_period}-day SMA but below {TREND_FAST_SMA_PERIOD}-day SMA "
+                        f"(${trend_ctx['sma20']:.2f}) -- trend filter says wait"
+                    )
+                    continue
+                if trend_ctx["pullback_state"] != "ready":
+                    rejections[ticker] = (
+                        f"Trend is green, but pullback setup is {trend_ctx['pullback_label'].lower()} "
+                        f"(drop {trend_ctx['pullback_drop_pct']:.1f}% from recent peak, "
+                        f"{trend_ctx['sma20_distance_pct']:+.1f}% vs {TREND_FAST_SMA_PERIOD}-day SMA) -- "
+                        "waiting for a cleaner pullback/reversal"
+                    )
+                    continue
         eligible.append(row)
 
     if strategy["prefer_drawdown_opportunity"]:
@@ -1309,11 +1434,11 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
     avoid_list = build_avoid_list(conn)
     success(f"Avoid list: {len(avoid_list)} tickers excluded")
 
-    step("Step 2: ranking remaining candidates by strategy fit")
+    step("Step 2: applying trend and pullback filters, then ranking remaining candidates")
     all_rows = load_all_active_candidates(conn)
     by_ticker = {row["ticker"]: row for row in all_rows}
     pool, rejections = rank_and_filter_pool(conn, all_rows, avoid_list, strategy_key, pool_size, sma_period=sma_period)
-    success(f"Candidate pool after quality/avoid/trend filters: {len(pool)} tickers")
+    success(f"Candidate pool after quality/avoid/trend/pullback filters: {len(pool)} tickers")
 
     if yf is None:
         warning("yfinance unavailable; skipping earnings/options checks")
@@ -1626,7 +1751,8 @@ def _print_day_of_week_backtest(candidates):
 def _print_single_leg_report(candidates, strategy_key):
     header = (
         f"{'Ticker':<8}{'Edge':>7}  {'Sector':<16}{'Price':>9}{'Qual':>6}{'Risk':>6}"
-        f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}{'ShortFlt%':>10}"
+        f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'Trend':>7}{'PBK':>8}"
+        f"{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}{'ShortFlt%':>10}"
         f"{'Exp':>12}{'Strike':>8}{'Premium':>8}{'ROI%':>7}{'Mid':>7}{'BrkEven':>9}"
         f"{'IV%':>7}{'RV%':>7}{'IVprem':>8}{'ProbOTM%':>9}{'OI':>7}{'Sentiment':>10}"
     )
@@ -1641,6 +1767,7 @@ def _print_single_leg_report(candidates, strategy_key):
             f"{(r.get('current_drawdown_pct') if r.get('current_drawdown_pct') is not None else 0):>8.1f}"
             f"{(r.get('avg_drawdown_pct') if r.get('avg_drawdown_pct') is not None else 0):>7.1f}"
             f"{(r.get('pct_above_52w_low') if r.get('pct_above_52w_low') is not None else 0):>10.1f}"
+            f"{(r.get('trend_label') or 'N/A'):>7}{(r.get('pullback_label') or 'N/A'):>8}"
             f"{(r.get('insider_sellers') or 0):>9}{_format_insider_value_m(r):>9.1f}"
             f"{_format_concentration_risk(r):>9}{_format_short_interest(r):>10}"
             f"{r['expiration']:>12}{r['strike']:>8.1f}{r['premium']:>8.2f}{(r.get('roi_pct') or 0):>7.2f}"
@@ -1657,6 +1784,9 @@ def _print_single_leg_report(candidates, strategy_key):
     print("screening aid for ranking filtered candidates against each other, not a probability/return estimate.")
     print("CurrDD% = current drawdown from 52w high (negative), AvgDD% = this ticker's historical average")
     print("drawdown magnitude, Lo52wGap% = how far the price sits above its 52-week low (smaller = closer to the low).")
+    print("Trend = 20DMA/50DMA regime: Green = price > 20DMA > 50DMA, Yellow = price > 50DMA but below 20DMA,")
+    print("Red = price < 50DMA. PBK = pullback state: Ready = 1-3% pullback toward 20DMA support plus bullish")
+    print("reversal, Extended = trend is green but not pulled back enough yet, Wait = still setting up / deeper pullback.")
     print("#Sellers/InsSel$M = distinct insiders who sold on the open market / total $ sold, trailing 180 days --")
     print("informational only, not used to filter candidates (see README for why).")
     print("ConcRisk = LLM-derived 0-100 estimate of structural product/customer/supplier/geographic")
@@ -1691,7 +1821,8 @@ def _print_single_leg_report(candidates, strategy_key):
 def _print_spread_report(candidates):
     header = (
         f"{'Ticker':<8}{'Edge':>7}  {'Sector':<11}{'Price':>9}{'Qual':>6}{'Risk':>6}"
-        f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}{'ShortFlt%':>10}"
+        f"{'CurrDD%':>8}{'AvgDD%':>7}{'Lo52wGap%':>10}{'Trend':>7}{'PBK':>8}"
+        f"{'#Sellers':>9}{'InsSel$M':>9}{'ConcRisk':>9}{'ShortFlt%':>10}"
         f"{'Exp':>12}{'Short':>7}{'Long':>7}{'Width':>7}{'Credit':>8}{'MidCr':>7}"
         f"{'MaxLoss':>9}{'RoR%':>7}{'BrkEven':>9}{'IV%':>7}{'ProbOTM%':>9}"
     )
@@ -1705,6 +1836,7 @@ def _print_spread_report(candidates):
             f"{(r.get('current_drawdown_pct') if r.get('current_drawdown_pct') is not None else 0):>8.1f}"
             f"{(r.get('avg_drawdown_pct') if r.get('avg_drawdown_pct') is not None else 0):>7.1f}"
             f"{(r.get('pct_above_52w_low') if r.get('pct_above_52w_low') is not None else 0):>10.1f}"
+            f"{(r.get('trend_label') or 'N/A'):>7}{(r.get('pullback_label') or 'N/A'):>8}"
             f"{(r.get('insider_sellers') or 0):>9}{_format_insider_value_m(r):>9.1f}"
             f"{_format_concentration_risk(r):>9}{_format_short_interest(r):>10}"
             f"{r['expiration']:>12}{r['short_strike']:>7.1f}{r['long_strike']:>7.1f}{r['spread_width']:>7.1f}"
@@ -1720,6 +1852,9 @@ def _print_spread_report(candidates):
     print("for ranking filtered candidates against each other, not a probability/return estimate.")
     print("CurrDD% = current drawdown from 52w high (negative), AvgDD% = this ticker's historical average")
     print("drawdown magnitude, Lo52wGap% = how far the price sits above its 52-week low (smaller = closer to the low).")
+    print("Trend = 20DMA/50DMA regime: Green = price > 20DMA > 50DMA, Yellow = price > 50DMA but below 20DMA,")
+    print("Red = price < 50DMA. PBK = pullback state: Ready = 1-3% pullback toward 20DMA support plus bullish")
+    print("reversal, Extended = trend is green but not pulled back enough yet, Wait = still setting up / deeper pullback.")
     print("#Sellers/InsSel$M = distinct insiders who sold on the open market / total $ sold, trailing 180 days --")
     print("informational only, not used to filter candidates (see README for why).")
     print("ConcRisk = LLM-derived 0-100 estimate of structural product/customer/supplier/geographic")

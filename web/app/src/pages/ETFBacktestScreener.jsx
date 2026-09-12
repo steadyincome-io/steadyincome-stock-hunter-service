@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Layout from "../components/Layout";
 import { useDatabase } from "../lib/useDatabase";
 import { QUERIES } from "../lib/queries";
 import { fmtPrice, fmtPct, fmtDate, changeColorClass } from "../lib/format";
+import { fetchLivePrices } from "../lib/optionsApi";
 
 const INVESTED_AMOUNT = 10000;
 
@@ -22,6 +23,8 @@ function daysSince(fromDateStr, toDateStr) {
 // how the cell happens to be formatted for display.
 const SORTABLE_COLUMNS = {
   price: (r) => r.price,
+  high52w: (r) => r.high_52w,
+  holdingsCount: (r) => r.holdings_count,
   current_drawdown_pct: (r) => r.current_drawdown_pct,
   lowPrice: (r) => r.backtest?.lowPrice,
   daysSinceLow: (r) => r.backtest?.daysSinceLow,
@@ -46,25 +49,98 @@ function SortableTh({ label, sortKey, sort, onSort, className = "" }) {
   );
 }
 
+function PriceSourceChip({ source }) {
+  const label = source === "live" ? "Live" : "Snapshot";
+  const cls = source === "live"
+    ? "bg-success/10 text-success border-success/20"
+    : "bg-outline-variant/30 text-on-surface-variant border-outline-variant/40";
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+function RoiTooltip({ roiPct, annualizedReturnPct, daysSinceLow }) {
+  if (roiPct == null && annualizedReturnPct == null) return null;
+  return (
+    <div
+      role="tooltip"
+      className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 w-72 rounded-lg border border-outline-variant bg-surface-container-lowest p-3 text-left text-body-sm text-on-surface opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
+    >
+      <div className="text-label-mono uppercase tracking-wide text-outline">ROI Detail</div>
+      <div className="mt-2 space-y-1">
+        {roiPct != null && (
+          <div>
+            <span className="text-outline">Realized ROI:</span>{" "}
+            <span className={changeColorClass(roiPct)}>{fmtPct(roiPct, 2)}</span>
+          </div>
+        )}
+        {annualizedReturnPct != null && (
+          <div>
+            <span className="text-outline">Annualized ROI:</span>{" "}
+            <span className={changeColorClass(annualizedReturnPct)}>{fmtPct(annualizedReturnPct, 2)}</span>
+          </div>
+        )}
+        {daysSinceLow != null && (
+          <div>
+            <span className="text-outline">Days held:</span> {daysSinceLow}d
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ETFBacktestScreener() {
   const { db, loading, error, query, queryOne } = useDatabase();
   const navigate = useNavigate();
   const [sort, setSort] = useState({ key: null, dir: "desc" });
+  const [livePrices, setLivePrices] = useState({});
+
+  const etfs = useMemo(() => {
+    if (!db) return [];
+    return query(QUERIES.etfBacktestList) || [];
+  }, [db]);
+
+  useEffect(() => {
+    if (!etfs.length) {
+      setLivePrices({});
+      return;
+    }
+    const controller = new AbortController();
+    fetchLivePrices(etfs.map((etf) => etf.ticker), { signal: controller.signal })
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setLivePrices(data.prices || {});
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setLivePrices({});
+      });
+    return () => controller.abort();
+  }, [etfs]);
 
   const rows = useMemo(() => {
-    if (!db) return [];
-    const etfs = query(QUERIES.etfBacktestList) || [];
     const today = new Date().toISOString().slice(0, 10);
     return etfs.map((etf) => {
+      const livePrice = livePrices[etf.ticker]?.price;
+      const price = livePrice != null ? livePrice : etf.price;
+      const priceSource = livePrice != null ? "live" : "snapshot";
+      const currentDrawdownPct = price != null && etf.high_52w > 0
+        ? ((price - etf.high_52w) / etf.high_52w) * 100
+        : etf.current_drawdown_pct;
+
       const low = queryOne(QUERIES.etf52wLowDate, [etf.ticker]);
       let backtest = null;
-      if (low && low.close_price > 0 && etf.price != null) {
+      if (low && low.close_price > 0 && price != null) {
         const shares = INVESTED_AMOUNT / low.close_price;
-        const valueToday = shares * etf.price;
+        const valueToday = shares * price;
         const div = queryOne(QUERIES.dividendsBetween, [etf.ticker, low.trade_date, today]);
         const dividendsEarned = shares * (div?.total_per_share || 0);
         const daysSinceLow = daysSince(low.trade_date, etf.updated_at);
         const totalReturnMultiple = (valueToday + dividendsEarned) / INVESTED_AMOUNT;
+        const roiPct = (totalReturnMultiple - 1) * 100;
         // CAGR-style compounding, not a linear *365/days scale-up -- linear
         // annualization badly overstates short holding periods (e.g. a 5%
         // gain in 10 days would linearly "annualize" to 182%). This is a
@@ -76,17 +152,19 @@ export default function ETFBacktestScreener() {
         backtest = {
           lowDate: low.trade_date,
           lowPrice: low.close_price,
+          high52w: etf.high_52w,
           valueToday,
           gainDollars: valueToday - INVESTED_AMOUNT,
-          gainPct: ((etf.price - low.close_price) / low.close_price) * 100,
+          gainPct: ((price - low.close_price) / low.close_price) * 100,
           daysSinceLow,
           dividendsEarned,
+          roiPct,
           annualizedReturnPct,
         };
       }
-      return { ...etf, backtest };
+      return { ...etf, price, priceSource, current_drawdown_pct: currentDrawdownPct, backtest };
     });
-  }, [db]);
+  }, [etfs, livePrices, queryOne]);
 
   const sortedRows = useMemo(() => {
     if (!sort.key) return rows;
@@ -124,7 +202,8 @@ export default function ETFBacktestScreener() {
             Annualized Return compounds (price gain + dividends) over the actual holding period into a CAGR-style
             annual rate -- ((endValue/startValue)^(365/daysHeld) - 1) -- not a linear x365/days scale-up, since that
             would badly overstate short holds. It's an annualization of the realized return, not a forecast that
-            the same rate continues. Click a numeric column header to sort.
+            the same rate continues. Price is fetched live from the backend when available, with the pipeline
+            snapshot as a fallback. Click a numeric column header to sort.
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -133,6 +212,8 @@ export default function ETFBacktestScreener() {
               <tr className="border-b border-surface-container text-label-mono text-on-surface-variant uppercase">
                 <th className="py-cell-padding-y px-cell-padding-x font-normal">Ticker</th>
                 <SortableTh label="Price" sortKey="price" sort={sort} onSort={handleSort} />
+                <SortableTh label="52W High" sortKey="high52w" sort={sort} onSort={handleSort} />
+                <SortableTh label="Holdings" sortKey="holdingsCount" sort={sort} onSort={handleSort} />
                 <SortableTh label="Current DD" sortKey="current_drawdown_pct" sort={sort} onSort={handleSort} />
                 <SortableTh label="52W Low" sortKey="lowPrice" sort={sort} onSort={handleSort} />
                 <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">Low Date</th>
@@ -153,7 +234,16 @@ export default function ETFBacktestScreener() {
                   onClick={() => navigate(`/analysis/${r.ticker}`)}
                 >
                   <td className="py-cell-padding-y px-cell-padding-x font-bold text-on-surface">{r.ticker}</td>
-                  <td className="py-cell-padding-y px-cell-padding-x text-right">{fmtPrice(r.price)}</td>
+                  <td className="py-cell-padding-y px-cell-padding-x text-right">
+                    <div className="flex flex-col items-end gap-1">
+                      <span>{fmtPrice(r.price)}</span>
+                      <PriceSourceChip source={r.priceSource} />
+                    </div>
+                  </td>
+                  <td className="py-cell-padding-y px-cell-padding-x text-right">{fmtPrice(r.high_52w)}</td>
+                  <td className="py-cell-padding-y px-cell-padding-x text-right">
+                    {r.holdings_count != null ? Number(r.holdings_count).toLocaleString() : "--"}
+                  </td>
                   <td className={`py-cell-padding-y px-cell-padding-x text-right ${changeColorClass(r.current_drawdown_pct)}`}>
                     {r.current_drawdown_pct != null ? fmtPct(r.current_drawdown_pct) : "--"}
                   </td>
@@ -164,8 +254,20 @@ export default function ETFBacktestScreener() {
                       <td className="py-cell-padding-y px-cell-padding-x text-right text-on-surface-variant">
                         {r.backtest.daysSinceLow != null ? `${r.backtest.daysSinceLow}d` : "--"}
                       </td>
-                      <td className="py-cell-padding-y px-cell-padding-x text-right">
-                        {fmtPrice(INVESTED_AMOUNT)} <span className="text-on-surface-variant">&rarr;</span> {fmtPrice(r.backtest.valueToday)}
+                      <td className="group relative py-cell-padding-y px-cell-padding-x text-right">
+                        <div className="inline-flex flex-col items-end">
+                          <span>
+                            {fmtPrice(INVESTED_AMOUNT)} <span className="text-on-surface-variant">&rarr;</span> {fmtPrice(r.backtest.valueToday)}
+                          </span>
+                          <span className="text-label-mono text-outline">
+                            ROI {r.backtest.roiPct != null ? fmtPct(r.backtest.roiPct, 2) : "--"}
+                          </span>
+                        </div>
+                        <RoiTooltip
+                          roiPct={r.backtest.roiPct}
+                          annualizedReturnPct={r.backtest.annualizedReturnPct}
+                          daysSinceLow={r.backtest.daysSinceLow}
+                        />
                       </td>
                       <td className={`py-cell-padding-y px-cell-padding-x text-right font-medium ${changeColorClass(r.backtest.gainDollars)}`}>
                         {r.backtest.gainDollars >= 0 ? "+" : ""}{fmtPrice(r.backtest.gainDollars)} ({fmtPct(r.backtest.gainPct)})

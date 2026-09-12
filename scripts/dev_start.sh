@@ -56,7 +56,7 @@ start_ui() {
   fi
 
   cd "$APP_DIR"
-  nohup "$VITE_BIN" > "$UI_LOG_FILE" 2>&1 &
+  nohup "$VITE_BIN" --host 127.0.0.1 > "$UI_LOG_FILE" 2>&1 &
   disown
   echo $! > "$UI_PID_FILE"
 

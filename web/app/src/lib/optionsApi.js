@@ -20,3 +20,17 @@ export async function fetchOptionsChain(ticker, price, { signal } = {}) {
   }
   return resp.json();
 }
+
+export async function fetchLivePrices(tickers, { signal } = {}) {
+  const uniqueTickers = [...new Set((tickers || []).map((t) => String(t).trim()).filter(Boolean))];
+  if (uniqueTickers.length === 0) return { prices: {} };
+
+  const url = `${OPTIONS_API_BASE}/api/live-prices?tickers=${encodeURIComponent(uniqueTickers.join(","))}`;
+  const resp = await fetch(url, { signal });
+  if (!resp.ok) {
+    const err = new Error(`Live prices API returned HTTP ${resp.status}`);
+    err.httpStatus = resp.status;
+    throw err;
+  }
+  return resp.json();
+}

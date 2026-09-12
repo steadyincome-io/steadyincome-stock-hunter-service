@@ -23,6 +23,12 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from .logger import error, info, warning
+from .yfinance_throttle import throttle_yfinance
+
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
 
 try:
     from dotenv import load_dotenv
@@ -86,6 +92,30 @@ def _parse_occ_symbol(symbol: str):
         "side": "call" if m.group("side") == "C" else "put",
         "strike": int(m.group("strike")) / 1000.0,
     }
+
+
+def _yf_symbol(ticker: str) -> str:
+    return ticker.replace(".", "-")
+
+
+def _fetch_live_price(ticker: str):
+    """Best-effort live quote for a ticker using yfinance.
+
+    Returns a float on success or None on any failure. This intentionally
+    mirrors the rest of the repo's live-price fallback behavior: if Yahoo
+    data is unavailable, callers should keep using the stored snapshot.
+    """
+    if yf is None:
+        return None
+    try:
+        throttle_yfinance()
+        hist = yf.Ticker(_yf_symbol(ticker)).history(period="1d")
+        if hist.empty:
+            return None
+        return float(hist["Close"].iloc[-1])
+    except Exception as exc:
+        warning(f"{ticker}: live price fetch failed: {exc}")
+        return None
 
 
 
@@ -186,6 +216,27 @@ def options_chain(ticker: str):
         })
 
     return jsonify({"ticker": ticker, "expirations": expirations})
+
+
+@app.route("/api/live-prices")
+def live_prices():
+    tickers_raw = request.args.get("tickers", "")
+    tickers = [t.strip().upper() for t in tickers_raw.split(",") if t.strip()]
+    if not tickers:
+        return jsonify({"prices": {}})
+    if len(tickers) > 100:
+        return jsonify({"error": "too_many_tickers"}), 400
+    if yf is None:
+        return jsonify({"error": "yfinance_unavailable"}), 500
+
+    prices = {}
+    for ticker in dict.fromkeys(tickers):
+        price = _fetch_live_price(ticker)
+        prices[ticker] = {
+            "price": price,
+            "source": "live" if price is not None else "snapshot_fallback",
+        }
+    return jsonify({"prices": prices})
 
 
 ### ---- Wheel-strategy trade tracker ---------------------------------------

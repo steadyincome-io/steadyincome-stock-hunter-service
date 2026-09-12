@@ -174,11 +174,22 @@ export const QUERIES = {
     SELECT
       u.ticker, u.name, u.market_cap,
       ds.price, ds.high_52w, ds.low_52w, ds.current_drawdown_pct, ds.updated_at,
+      ehc.holdings_count,
       dsum.completed_drawdowns, dsum.drawdowns_over_10pct, dsum.drawdowns_over_20pct,
       dsum.drawdowns_over_30pct, dsum.worst_drawdown_pct, dsum.avg_recovery_days
     FROM universe u
     JOIN daily_snapshot ds ON ds.ticker = u.ticker
     LEFT JOIN drawdown_summary dsum ON dsum.ticker = u.ticker
+    LEFT JOIN (
+      SELECT eh.ticker, COUNT(*) AS holdings_count
+      FROM etf_holdings eh
+      INNER JOIN (
+        SELECT ticker, MAX(filing_date) AS latest_filing_date
+        FROM etf_holdings
+        GROUP BY ticker
+      ) latest ON latest.ticker = eh.ticker AND latest.latest_filing_date = eh.filing_date
+      GROUP BY eh.ticker
+    ) ehc ON ehc.ticker = u.ticker
     WHERE u.asset_type = 'ETF' AND u.status = 'active' AND ds.price IS NOT NULL
     ORDER BY ds.current_drawdown_pct ASC
   `,
