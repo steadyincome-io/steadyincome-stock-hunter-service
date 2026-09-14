@@ -49,3 +49,5 @@ infra/terraform/*.tfplan
 
 designs*
 trades*
+
+*.parquet*
