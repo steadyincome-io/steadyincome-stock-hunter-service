@@ -12,11 +12,22 @@ spx_0dte_strategy/
 ```
 
 ## Strategy Parameters (Pre-Configured)
-- **Signal Time**: 10:00 AM ET (evaluates 09:30 Open vs. 10:00 AM Entry price)
-- **Target Delta**: `0.15`
+- **Signal Time**: 09:30 AM Open vs 10:30 AM Price (with 10:00 AM as informational check)
+- **Target Delta**: `0.15` (computed via Black-Scholes from live SPXW chain)
 - **Spread Width**: `$25.00`
 - **Profit Target**: `60%`
 - **Rate Limit Control**: 5-minute polling interval (300 seconds)
+- **Options Symbol**: `SPXW` (weekly 0DTE SPX options via Alpaca indicative feed)
+
+## Delta Calculation
+
+The daemon fetches the **real SPXW 0DTE options chain** from Alpaca's `/v1beta1/options/snapshots/SPXW` endpoint, then:
+
+1. Computes **implied volatility** from market mid-prices using Newton-Raphson
+2. Computes **Black-Scholes delta** for each available strike
+3. Selects the strike closest to the target delta (0.15)
+
+This replaces the old fixed-percentage offset estimation with actual market-based delta selection.
 
 ## How to Run Live
 
@@ -36,3 +47,10 @@ from spx_0dte_strategy.db import get_all_trades_df
 df = get_all_trades_df()
 print(df)
 ```
+
+## Dependencies
+
+- `scipy` (for `norm.cdf` / `norm.pdf` in Black-Scholes)
+- `yfinance` (for ^GSPC SPX index intraday bars)
+- `requests` (for Alpaca Market Data API)
+- `pandas`, `numpy`, `python-dotenv`
