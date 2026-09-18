@@ -9,7 +9,7 @@ from .sec_edgar_worker import sync_sec_insider_data
 from .sec_etf_worker import sync_etf_reports
 from .sec_financials_worker import sync_10k_10q_financials, get_annual_revenue_history
 from .sec_eightk_worker import sync_8k_events
-from .dividend_worker import sync_dividend_history
+from .dividend_worker import sync_dividend_history, sync_dividend_history_from_mongo
 from .yfinance_throttle import throttle_yfinance
 from .drawdown_analytics import compute_and_store_drawdowns, drawdown_opportunity_score
 from .distress_analytics import compute_distress, store_distress_score
@@ -876,6 +876,13 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
     except Exception as e:
         error(f"Dividend history sync failed: {e}")
     progress(97, "Phase 4b/5: dividend history synced")
+
+    step("Step 4c/5: syncing MongoDB dividend history")
+    try:
+        sync_dividend_history_from_mongo(db_path)
+    except Exception as e:
+        error(f"MongoDB dividend history sync failed: {e}")
+    progress(98, "Phase 4c/5: MongoDB dividend history synced")
 
     # Step 5: Record Pipeline Execution
     step("Step 5/5: writing pipeline run record")

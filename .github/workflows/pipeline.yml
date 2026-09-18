@@ -89,6 +89,11 @@ jobs:
       - name: Run full pipeline (one-shot)
         env:
           PYTHONPATH: src
+          # MongoDB dividend source. Configure these repository secrets so the
+          # weekly/push pipeline can access the same source as local runs.
+          MONGO_CLIENT_URL: ${{ secrets.MONGO_CLIENT_URL }}
+          MONGO_DB_NAME: ${{ secrets.MONGO_DB_NAME }}
+          MONGO_DIVIDEND_COLLECTION: ${{ secrets.MONGO_DIVIDEND_COLLECTION }}
           # Only secrets that are actually set in this repo are declared here.
           # Do NOT add a line for a secret you haven't created yet -- GitHub
           # Actions substitutes an empty string for a missing secret rather
