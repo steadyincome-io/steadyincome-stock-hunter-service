@@ -3,6 +3,7 @@ import MarketOverview from "./pages/MarketOverview";
 import SectorRegulatory from "./pages/SectorRegulatory";
 import TickerAnalysis from "./pages/TickerAnalysis";
 import ETFBacktestScreener from "./pages/ETFBacktestScreener";
+import UniverseDividends from "./pages/UniverseDividends";
 import WheelTracker from "./pages/WheelTracker";
 import System from "./pages/System";
 
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/analysis" element={<TickerAnalysis />} />
         <Route path="/analysis/:ticker" element={<TickerAnalysis />} />
         <Route path="/etf-backtest" element={<ETFBacktestScreener />} />
+        <Route path="/universe-dividends" element={<UniverseDividends />} />
         <Route path="/wheel-tracker" element={<WheelTracker />} />
         <Route path="/system" element={<System />} />
       </Routes>

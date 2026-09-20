@@ -193,6 +193,47 @@ export const QUERIES = {
     WHERE u.asset_type = 'ETF' AND u.status = 'active' AND ds.price IS NOT NULL
     ORDER BY ds.current_drawdown_pct ASC
   `,
+  // Active universe dividend/price overview. "Yearly Dividend" is the
+  // trailing 365-day per-share total. Decrease detection compares completed
+  // calendar-year totals so the partial current year cannot create a false
+  // decrease.
+  universeDividendTable: `
+    WITH annual_dividends AS (
+      SELECT ticker, strftime('%Y', ex_date) AS dividend_year,
+             SUM(amount_per_share) AS annual_total
+      FROM dividend_history
+      GROUP BY ticker, strftime('%Y', ex_date)
+    ), annual_changes AS (
+      SELECT ticker, dividend_year, annual_total,
+             LAG(annual_total) OVER (PARTITION BY ticker ORDER BY dividend_year) AS prior_total
+      FROM annual_dividends
+      WHERE dividend_year < strftime('%Y', 'now')
+    ), decrease_flags AS (
+      SELECT ticker,
+             MAX(CASE WHEN prior_total IS NOT NULL AND annual_total < prior_total THEN 1 ELSE 0 END) AS dividend_ever_decreased
+      FROM annual_changes
+      GROUP BY ticker
+    ), dividend_stats AS (
+      SELECT ticker,
+             MIN(ex_date) AS dividend_since,
+             SUM(CASE WHEN ex_date >= date('now', '-365 days') AND ex_date <= date('now')
+                      THEN amount_per_share ELSE 0 END) AS yearly_dividend
+      FROM dividend_history
+      GROUP BY ticker
+    )
+    SELECT
+      u.ticker, u.name, u.asset_type, u.sector, u.market_cap,
+      ds.price, ds.high_52w, ds.low_52w, ds.current_drawdown_pct, ds.investment_score, ds.updated_at,
+      divs.yearly_dividend, divs.dividend_since,
+      CASE WHEN divs.ticker IS NULL THEN NULL
+           WHEN COALESCE(flags.dividend_ever_decreased, 0) = 1 THEN 1 ELSE 0 END AS dividend_ever_decreased
+    FROM universe u
+    LEFT JOIN daily_snapshot ds ON ds.ticker = u.ticker
+    LEFT JOIN dividend_stats divs ON divs.ticker = u.ticker
+    LEFT JOIN decrease_flags flags ON flags.ticker = u.ticker
+    WHERE u.status = 'active'
+    ORDER BY u.ticker
+  `,
   // Exact date/price of the trailing-252-trading-day low -- daily_snapshot.low_52w
   // only stores the price, not when it happened, and "recent 52-week low" needs
   // the date to compute a $10k-invested-then return.

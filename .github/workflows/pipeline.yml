@@ -60,7 +60,7 @@ jobs:
       # artifact exists yet -- the next step creates a fresh DB in that case,
       # same as before this change.
       - name: Restore database from previous successful run
-        uses: dawidd6/action-download-artifact@v6
+        uses: dawidd6/action-download-artifact@v24
         continue-on-error: true
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -71,7 +71,7 @@ jobs:
           if_no_artifact_found: warn
 
       - name: Restore SEC companyfacts cache from previous successful run
-        uses: dawidd6/action-download-artifact@v6
+        uses: dawidd6/action-download-artifact@v24
         continue-on-error: true
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
