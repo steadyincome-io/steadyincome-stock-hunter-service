@@ -1,0 +1,130 @@
+{
+  "ADBE": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 252.6699981689453,
+    "steps_bought": 2
+  },
+  "APH": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "intraday",
+    "rolling_peak": 84.59,
+    "steps_bought": 1
+  },
+  "BAM": {
+    "armed": true,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": 45.655,
+    "peak_source": "intraday",
+    "rolling_peak": 45.655,
+    "steps_bought": 0
+  },
+  "BKNG": {
+    "armed": true,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": 166.79000000000002,
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 170.52000427246094,
+    "steps_bought": 1
+  },
+  "INTU": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 313.1300048828125,
+    "steps_bought": 4
+  },
+  "JNJ": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "intraday",
+    "rolling_peak": 278.13,
+    "steps_bought": 1
+  },
+  "LNG": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "intraday",
+    "rolling_peak": 281.365,
+    "steps_bought": 2
+  },
+  "META": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "intraday",
+    "rolling_peak": 753.925,
+    "steps_bought": 0
+  },
+  "MO": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 69.69999694824219,
+    "steps_bought": 0
+  },
+  "MPLX": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 58.619998931884766,
+    "steps_bought": 1
+  },
+  "NEM": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 124.38999938964844,
+    "steps_bought": 1
+  },
+  "PG": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 147.5500030517578,
+    "steps_bought": 1
+  },
+  "PM": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "intraday",
+    "rolling_peak": 193.81,
+    "steps_bought": 0
+  },
+  "SLB": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 52.08000183105469,
+    "steps_bought": 0
+  },
+  "SNDK": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "intraday",
+    "rolling_peak": 1789.905,
+    "steps_bought": 0
+  },
+  "UBER": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 70.87000274658203,
+    "steps_bought": 0
+  }
+}

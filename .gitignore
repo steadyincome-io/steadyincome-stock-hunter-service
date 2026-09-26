@@ -49,5 +49,8 @@ infra/terraform/*.tfplan
 
 designs*
 trades*
+!trades/
+!trades/alpaca_dip_dca_trader.py
+!trades/.env.example
 
 *.parquet*
