@@ -80,6 +80,10 @@ Each cycle runs immediately at startup and then sleeps for the configured interv
 
 For each eligible symbol, the trader seeds its initial rolling peak from the most recent closing price before today (Friday's close when starting on Monday). It then logs the current quote, reference peak, drawdown, step count, and either `SIGNAL` or `no signal`. A symbol that is at least one 3% step below that reference can receive an initial DCA lot even if it has no existing position.
 
+Existing Alpaca positions and symbols with open orders are always tracked, even if they no longer pass the SQLite filters. The filters control new entries; they do not orphan existing positions or orders.
+
+Alpaca remains the source of truth for positions and open orders. The JSON state file stores rolling peaks and DCA steps; stale state is cleared when a symbol has neither a position nor an open order, allowing a future re-entry to start fresh.
+
 ## Command-line flags
 
 | Flag | Default | Description |

@@ -182,8 +182,28 @@ class Trader:
     def run_once(self, symbols: list[str], last_closes: dict[str, float]) -> None:
         positions = self.broker.positions()
         open_orders = self.broker.open_orders()
-        quotes = self.broker.latest_quotes(symbols)
-        orders_by_symbol = {symbol: [] for symbol in symbols}
+        tracked_symbols = list(dict.fromkeys([
+            *symbols,
+            *positions.keys(),
+            *(order.get("symbol") for order in open_orders if order.get("symbol")),
+        ]))
+        held_symbols = {
+            symbol for symbol, position in positions.items()
+            if float(position.get("qty", 0) or 0) > 0
+        }
+        open_order_symbols = {order.get("symbol") for order in open_orders if order.get("symbol")}
+        for symbol, entry in list(self.state.items()):
+            if symbol in held_symbols or symbol in open_order_symbols:
+                continue
+            # Keep state for eligible flat symbols so they can establish an
+            # initial entry from their prior close. Clear state for symbols
+            # that left the universe, or whose previously tracked sell order
+            # has disappeared after filling.
+            if symbol not in symbols or entry.get("open_sell_order_id"):
+                del self.state[symbol]
+                LOG.info("%s: cleared stale strategy state; no position or open order", symbol)
+        quotes = self.broker.latest_quotes(tracked_symbols)
+        orders_by_symbol = {symbol: [] for symbol in tracked_symbols}
         for order in open_orders:
             if order.get("symbol") in orders_by_symbol:
                 orders_by_symbol[order["symbol"]].append(order)
@@ -193,12 +213,12 @@ class Trader:
         buying_power = float(account.get("buying_power", 0) or 0)
         available_for_buy = min(cash, buying_power)
         LOG.info(
-            "Universe=%d quotes=%d cash=$%.2f buying_power=$%.2f available_for_buy=$%.2f mode=%s",
-            len(symbols), len(quotes), cash, buying_power, available_for_buy,
+            "Eligible=%d tracked=%d quotes=%d cash=$%.2f buying_power=$%.2f available_for_buy=$%.2f mode=%s",
+            len(symbols), len(tracked_symbols), len(quotes), cash, buying_power, available_for_buy,
             "DRY RUN" if self.dry_run else "PAPER TRADING",
         )
 
-        for symbol in symbols:
+        for symbol in tracked_symbols:
             price = quotes.get(symbol)
             if not price or price <= 0:
                 LOG.warning("%s: no usable Alpaca quote", symbol)
