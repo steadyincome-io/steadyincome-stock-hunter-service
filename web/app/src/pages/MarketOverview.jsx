@@ -78,6 +78,8 @@ export default function MarketOverview() {
                   <th className="py-cell-padding-y px-cell-padding-x text-label-mono text-on-surface-variant font-medium whitespace-nowrap">Sector</th>
                   <th className="py-cell-padding-y px-cell-padding-x text-label-mono text-on-surface-variant font-medium whitespace-nowrap text-right">Price</th>
                   <th className="py-cell-padding-y px-cell-padding-x text-label-mono text-on-surface-variant font-medium whitespace-nowrap text-right">1D Change</th>
+                  <th className="py-cell-padding-y px-cell-padding-x text-label-mono text-on-surface-variant font-medium whitespace-nowrap text-right">Dividend Yield</th>
+                  <th className="py-cell-padding-y px-cell-padding-x text-label-mono text-on-surface-variant font-medium whitespace-nowrap text-center">Price Decay</th>
                   <th className="py-cell-padding-y px-cell-padding-x text-label-mono text-on-surface-variant font-medium whitespace-nowrap text-center">Quality</th>
                   <th className="py-cell-padding-y px-cell-padding-x text-label-mono text-on-surface-variant font-medium whitespace-nowrap text-center">Risk Level</th>
                   <th className="py-cell-padding-y px-cell-padding-x text-label-mono text-on-surface-variant font-medium whitespace-nowrap">Verdict</th>
@@ -98,6 +100,16 @@ export default function MarketOverview() {
                       <td className="py-cell-padding-y px-cell-padding-x text-body-sm text-on-surface-variant">{row.sector || "--"}</td>
                       <td className="py-cell-padding-y px-cell-padding-x text-right text-on-surface tabular-nums">{row.price != null ? `$${Number(row.price).toFixed(2)}` : "--"}</td>
                       <td className={`py-cell-padding-y px-cell-padding-x text-right tabular-nums ${changeColorClass(row.price_change_1d)}`}>{fmtPct(row.price_change_1d)}</td>
+                      <td className="py-cell-padding-y px-cell-padding-x text-right text-on-surface tabular-nums">{fmtPct(row.dividend_yield_pct, 2)}</td>
+                      <td className="py-cell-padding-y px-cell-padding-x text-center">
+                        {row.price_decay == null ? (
+                          <span className="text-on-surface-variant">--</span>
+                        ) : (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${row.price_decay ? "bg-danger/10 text-danger" : "bg-success/10 text-success"}`}>
+                            {row.price_decay ? "Yes" : "No"}
+                          </span>
+                        )}
+                      </td>
                       <td className="py-cell-padding-y px-cell-padding-x text-center text-on-surface tabular-nums">{row.quality_score != null ? fmtNum(row.quality_score, 1) : "--"}</td>
                       <td className="py-cell-padding-y px-cell-padding-x text-center">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${rc.cls}`}>{rc.label}</span>

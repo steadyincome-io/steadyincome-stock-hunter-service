@@ -46,15 +46,33 @@ export const QUERIES = {
     GROUP BY bucket
   `,
   universeTable: `
+    WITH price_bounds AS (
+      SELECT
+        ph.ticker,
+        (SELECT close_price FROM price_history first_price
+         WHERE first_price.ticker = ph.ticker
+         ORDER BY trade_date ASC, id ASC LIMIT 1) AS inception_close,
+        (SELECT close_price FROM price_history last_price
+         WHERE last_price.ticker = ph.ticker
+         ORDER BY trade_date DESC, id DESC LIMIT 1) AS latest_close
+      FROM price_history ph
+      GROUP BY ph.ticker
+    )
     SELECT
       u.ticker, u.name, u.asset_type, u.sector, u.market_cap,
       ds.price, ds.price_change_1d, ds.high_52w, ds.low_52w,
       ds.current_drawdown_pct, ds.max_drawdown_1y_pct, ds.pe_ratio, ds.dividend_yield_pct,
+      CASE
+        WHEN pb.inception_close IS NULL OR pb.latest_close IS NULL THEN NULL
+        WHEN pb.latest_close < pb.inception_close THEN 1
+        ELSE 0
+      END AS price_decay,
       ds.quality_score, ds.investment_score, ds.risk_score, ds.insider_sentiment_score,
       ds.drawdown_opportunity_score, ds.distress_risk_level, ds.valuation_tier, ds.investment_verdict,
       ds.updated_at
     FROM universe u
     LEFT JOIN daily_snapshot ds ON ds.ticker = u.ticker
+    LEFT JOIN price_bounds pb ON pb.ticker = u.ticker
     WHERE u.status = 'active'
     ORDER BY u.ticker
   `,
@@ -175,6 +193,13 @@ export const QUERIES = {
       u.ticker, u.name, u.market_cap,
       ds.price, ds.high_52w, ds.low_52w, ds.current_drawdown_pct, ds.updated_at,
       ehc.holdings_count,
+      nav.status AS nav_erosion_status,
+      nav.raw_nav_return_pct,
+      nav.distribution_adjusted_return_pct,
+      nav.nav_start_date,
+      nav.nav_end_date,
+      nav.observation_count AS nav_observation_count,
+      nav.source AS nav_source,
       dsum.completed_drawdowns, dsum.drawdowns_over_10pct, dsum.drawdowns_over_20pct,
       dsum.drawdowns_over_30pct, dsum.worst_drawdown_pct, dsum.avg_recovery_days
     FROM universe u
@@ -190,6 +215,7 @@ export const QUERIES = {
       ) latest ON latest.ticker = eh.ticker AND latest.latest_filing_date = eh.filing_date
       GROUP BY eh.ticker
     ) ehc ON ehc.ticker = u.ticker
+    LEFT JOIN etf_nav_metrics nav ON nav.ticker = u.ticker
     WHERE u.asset_type = 'ETF' AND u.status = 'active' AND ds.price IS NOT NULL
     ORDER BY ds.current_drawdown_pct ASC
   `,

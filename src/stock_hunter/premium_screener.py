@@ -21,6 +21,7 @@ Usage:
     PYTHONPATH=src python -m stock_hunter.premium_screener
     PYTHONPATH=src python -m stock_hunter.premium_screener --strategy cash_secured_put
     PYTHONPATH=src python -m stock_hunter.premium_screener --strategy covered_call --max-picks 8
+    PYTHONPATH=src python -m stock_hunter.premium_screener --ignore-fomc-gate
 """
 import argparse
 import math
@@ -1368,7 +1369,7 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
                   show_day_of_week_backtest=True, min_premium_pct_of_strike=MIN_PREMIUM_PCT_OF_STRIKE,
                   expected_move_width_fraction=EXPECTED_MOVE_WIDTH_FRACTION,
                   max_loss_dollars=MAX_LOSS_DOLLARS_CAP, fomc_lookahead_days=FOMC_LOOKAHEAD_DAYS,
-                  show_news_sentiment=True):
+                  show_news_sentiment=True, ignore_fomc_gate=False):
     if strategy_key not in STRATEGIES:
         raise ValueError(f"Unknown strategy '{strategy_key}'. Choose from: {list(STRATEGIES)}")
 
@@ -1382,7 +1383,7 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
     # is (see check_fomc_proximity).
     step("Step 0: checking for an FOMC rate decision within the option's life")
     fomc_clear, fomc_detail = check_fomc_proximity(lookahead_days=fomc_lookahead_days)
-    if not fomc_clear:
+    if not fomc_clear and not ignore_fomc_gate:
         warning(
             f"FOMC meeting on {fomc_detail['next_meeting']} is {fomc_detail['days_away']} day(s) away, inside "
             f"the weekly option window -- no new trades this run (any strategy). Event-risk gate, not a "
@@ -1393,7 +1394,13 @@ def run_screener(db_path=DB_NAME, strategy_key="cash_secured_put", max_picks=0, 
             "strategy": strategy_key, "avoid_list": {}, "candidates": [], "rejected": [],
             "blocked_reason": f"FOMC meeting on {fomc_detail['next_meeting']} within the weekly option window",
         }
-    success(f"No FOMC meeting within the next {fomc_lookahead_days} days")
+    if not fomc_clear:
+        warning(
+            f"FOMC gate overridden by --ignore-fomc-gate: continuing evaluation despite the meeting on "
+            f"{fomc_detail['next_meeting']} in {fomc_detail['days_away']} day(s)."
+        )
+    else:
+        success(f"No FOMC meeting within the next {fomc_lookahead_days} days")
 
     if strategy["require_uptrend"]:
         step(f"Step 0b: checking market regime ({market_index} trend) and VIX before screening individual names")
@@ -1963,6 +1970,9 @@ if __name__ == "__main__":
                          help="Block new trades this run (every strategy, not just bullish/neutral) if an FOMC "
                               "rate decision falls within this many days -- event-risk gate, not a directional "
                               "hike/cut bet (default 10, matching the weekly option window)")
+    parser.add_argument("--ignore-fomc-gate", action="store_true",
+                         help="Continue evaluating candidates even when an FOMC meeting falls within the option window. "
+                              "The default whole-run FOMC safety gate remains enabled unless this is explicitly set.")
     parser.add_argument("--min-open-interest", type=int, default=MIN_OPEN_INTEREST,
                          help="Minimum open interest required on every leg (liquidity floor)")
     parser.add_argument("--min-premium-pct-of-strike", type=float, default=MIN_PREMIUM_PCT_OF_STRIKE,
@@ -2003,6 +2013,7 @@ if __name__ == "__main__":
         market_sma_period=args.market_sma_period,
         vix_threshold=args.vix_threshold,
         fomc_lookahead_days=args.fomc_lookahead_days,
+        ignore_fomc_gate=args.ignore_fomc_gate,
         min_open_interest=args.min_open_interest,
         show_day_of_week_backtest=args.show_day_of_week_backtest,
         min_premium_pct_of_strike=args.min_premium_pct_of_strike,

@@ -3,41 +3,49 @@
     "armed": false,
     "open_sell_order_id": null,
     "peak_price_since_armed": null,
-    "peak_source": "last_trading_day_close",
-    "rolling_peak": 252.6699981689453,
-    "steps_bought": 3
+    "peak_source": "intraday",
+    "rolling_peak": 244.865,
+    "steps_bought": 0
   },
   "APH": {
     "armed": false,
     "open_sell_order_id": null,
     "peak_price_since_armed": null,
     "peak_source": "intraday",
-    "rolling_peak": 84.59,
+    "rolling_peak": 85.11,
     "steps_bought": 1
   },
   "BAM": {
-    "armed": true,
+    "armed": false,
     "open_sell_order_id": null,
-    "peak_price_since_armed": 45.655,
+    "peak_price_since_armed": null,
     "peak_source": "intraday",
-    "rolling_peak": 45.655,
+    "rolling_peak": 45.3,
     "steps_bought": 0
   },
   "BKNG": {
-    "armed": true,
+    "armed": false,
     "open_sell_order_id": null,
-    "peak_price_since_armed": 166.79000000000002,
+    "peak_price_since_armed": null,
     "peak_source": "last_trading_day_close",
     "rolling_peak": 170.52000427246094,
-    "steps_bought": 1
+    "steps_bought": 2
+  },
+  "COP": {
+    "armed": false,
+    "open_sell_order_id": null,
+    "peak_price_since_armed": null,
+    "peak_source": "intraday",
+    "rolling_peak": 142.47500000000002,
+    "steps_bought": 0
   },
   "INTU": {
     "armed": false,
     "open_sell_order_id": null,
     "peak_price_since_armed": null,
-    "peak_source": "last_trading_day_close",
-    "rolling_peak": 313.1300048828125,
-    "steps_bought": 5
+    "peak_source": "intraday",
+    "rolling_peak": 311.135,
+    "steps_bought": 0
   },
   "JNJ": {
     "armed": false,
@@ -45,47 +53,31 @@
     "peak_price_since_armed": null,
     "peak_source": "intraday",
     "rolling_peak": 278.13,
-    "steps_bought": 2
-  },
-  "LNG": {
-    "armed": false,
-    "open_sell_order_id": null,
-    "peak_price_since_armed": null,
-    "peak_source": "intraday",
-    "rolling_peak": 281.365,
-    "steps_bought": 2
+    "steps_bought": 3
   },
   "LOW": {
     "armed": false,
-    "open_sell_order_id": null,
+    "open_sell_order_id": "71015363-2893-4e5b-a033-a2a2e414bcbe",
     "peak_price_since_armed": null,
     "peak_source": "intraday",
-    "rolling_peak": 187.945,
+    "rolling_peak": 195.765,
     "steps_bought": 0
-  },
-  "META": {
-    "armed": false,
-    "open_sell_order_id": "447d1d69-abc1-4600-be3c-fd9c39ee47b0",
-    "peak_price_since_armed": null,
-    "peak_source": "intraday",
-    "rolling_peak": 753.925,
-    "steps_bought": 1
   },
   "MO": {
     "armed": false,
     "open_sell_order_id": null,
     "peak_price_since_armed": null,
-    "peak_source": "last_trading_day_close",
-    "rolling_peak": 69.69999694824219,
+    "peak_source": "intraday",
+    "rolling_peak": 74.405,
     "steps_bought": 0
   },
   "MPLX": {
     "armed": false,
-    "open_sell_order_id": null,
+    "open_sell_order_id": "16b7623c-08bc-4b53-a1d8-645a510d7465",
     "peak_price_since_armed": null,
     "peak_source": "last_trading_day_close",
     "rolling_peak": 58.619998931884766,
-    "steps_bought": 1
+    "steps_bought": 3
   },
   "NEM": {
     "armed": false,
@@ -93,14 +85,14 @@
     "peak_price_since_armed": null,
     "peak_source": "last_trading_day_close",
     "rolling_peak": 124.38999938964844,
-    "steps_bought": 2
+    "steps_bought": 3
   },
   "PG": {
     "armed": false,
-    "open_sell_order_id": "3d0308d0-b260-49a4-885f-6ed1e1873035",
+    "open_sell_order_id": null,
     "peak_price_since_armed": null,
     "peak_source": "intraday",
-    "rolling_peak": 148.60500000000002,
+    "rolling_peak": 157.985,
     "steps_bought": 0
   },
   "PM": {
@@ -108,8 +100,8 @@
     "open_sell_order_id": null,
     "peak_price_since_armed": null,
     "peak_source": "intraday",
-    "rolling_peak": 194.16500000000002,
-    "steps_bought": 0
+    "rolling_peak": 205.42000000000002,
+    "steps_bought": 1
   },
   "SLB": {
     "armed": false,
@@ -117,22 +109,22 @@
     "peak_price_since_armed": null,
     "peak_source": "last_trading_day_close",
     "rolling_peak": 52.08000183105469,
-    "steps_bought": 1
+    "steps_bought": 2
   },
   "SNDK": {
     "armed": false,
     "open_sell_order_id": null,
     "peak_price_since_armed": null,
-    "peak_source": "intraday",
-    "rolling_peak": 1789.905,
-    "steps_bought": 1
+    "peak_source": "last_trading_day_close",
+    "rolling_peak": 1712.8900146484375,
+    "steps_bought": 7
   },
   "UBER": {
     "armed": false,
     "open_sell_order_id": null,
     "peak_price_since_armed": null,
-    "peak_source": "last_trading_day_close",
-    "rolling_peak": 70.87000274658203,
+    "peak_source": "intraday",
+    "rolling_peak": 71.025,
     "steps_bought": 0
   }
 }

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import Layout from "../components/Layout";
-import { fetchTrades, createTrade, updateTrade, deleteTrade, fetchLiveQuote } from "../lib/tradesApi";
+import { fetchTrades, createTrade, updateTrade, deleteTrade, fetchLiveQuote, fetchPositions, createPosition, deletePosition } from "../lib/tradesApi";
 import { fmtPrice, fmtDate, fmtNum } from "../lib/format";
 
 const STRATEGY_LABEL = { cash_secured_put: "Cash Secured Put", covered_call: "Covered Call" };
@@ -147,6 +147,177 @@ function NewTradeForm({ onCreate, onCancel }) {
   );
 }
 
+function NewPositionForm({ onCreate, onCancel }) {
+  const [form, setForm] = useState({
+    ticker: "",
+    shares: "",
+    average_cost: "",
+    as_of_date: new Date().toISOString().slice(0, 10),
+    notes: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState(null);
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  const inputCls = "h-9 px-3 border border-outline-variant rounded-lg bg-surface-container-lowest text-on-surface text-body-sm w-full";
+
+  async function submit(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setErr(null);
+    try {
+      await onCreate({
+        ...form,
+        ticker: form.ticker.toUpperCase().trim(),
+        shares: parseFloat(form.shares),
+        average_cost: parseFloat(form.average_cost),
+      });
+    } catch (e2) {
+      setErr(e2.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="bg-surface-container-lowest border border-outline-variant rounded-lg p-4 grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div>
+        <label className="text-label-mono text-on-surface-variant uppercase block mb-1">Ticker</label>
+        <input required className={inputCls} value={form.ticker} onChange={set("ticker")} placeholder="AAPL" />
+      </div>
+      <div>
+        <label className="text-label-mono text-on-surface-variant uppercase block mb-1">Shares</label>
+        <input required type="number" min="0.01" step="0.01" className={inputCls} value={form.shares} onChange={set("shares")} placeholder="100" />
+      </div>
+      <div>
+        <label className="text-label-mono text-on-surface-variant uppercase block mb-1">Average Cost</label>
+        <input required type="number" min="0" step="0.01" className={inputCls} value={form.average_cost} onChange={set("average_cost")} placeholder="150.00" />
+      </div>
+      <div>
+        <label className="text-label-mono text-on-surface-variant uppercase block mb-1">As Of</label>
+        <input required type="date" className={inputCls} value={form.as_of_date} onChange={set("as_of_date")} />
+      </div>
+      <div>
+        <label className="text-label-mono text-on-surface-variant uppercase block mb-1">Notes</label>
+        <input className={inputCls} value={form.notes} onChange={set("notes")} placeholder="Optional" />
+      </div>
+      {err && <div className="col-span-2 md:col-span-5 text-danger text-body-sm">{err}</div>}
+      <div className="col-span-2 md:col-span-5 flex gap-2 justify-end">
+        <button type="button" onClick={onCancel} className="h-9 px-4 rounded-lg border border-outline-variant text-body-sm text-on-surface-variant">Cancel</button>
+        <button type="submit" disabled={submitting} className="h-9 px-4 rounded-lg bg-primary text-on-primary text-body-sm font-medium disabled:opacity-50">
+          {submitting ? "Saving..." : "Add Position"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function PortfolioPositions({ positions, trades, onCreate, onDelete }) {
+  const [showForm, setShowForm] = useState(false);
+  const [expandedTicker, setExpandedTicker] = useState(null);
+
+  async function handleCreate(payload) {
+    await onCreate(payload);
+    setShowForm(false);
+  }
+
+  return (
+    <div className="bg-surface-container-lowest border border-outline-variant rounded-lg flex flex-col">
+      <div className="p-4 border-b border-surface-container flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-headline-sm text-primary">Portfolio Positions</h3>
+          <p className="text-body-sm text-on-surface-variant mt-1">Holdings available for covered calls and wheel tracking.</p>
+        </div>
+        <button onClick={() => setShowForm((v) => !v)} className="h-9 px-4 rounded-lg bg-primary text-on-primary text-body-sm font-medium flex items-center gap-1">
+          <span className="material-symbols-outlined text-sm">add</span> Add Position
+        </button>
+      </div>
+      {showForm && <div className="p-4 border-b border-surface-container"><NewPositionForm onCreate={handleCreate} onCancel={() => setShowForm(false)} /></div>}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="border-b border-surface-container text-label-mono text-on-surface-variant uppercase">
+              <th className="py-cell-padding-y px-cell-padding-x font-normal">Symbol</th>
+              <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">Shares</th>
+              <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">Avg Cost</th>
+              <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">Cost Basis</th>
+              <th className="py-cell-padding-y px-cell-padding-x font-normal text-center">Open Options</th>
+              <th className="py-cell-padding-y px-cell-padding-x font-normal">Wheel Status</th>
+              <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="text-data-tabular">
+            {positions.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-on-surface-variant text-body-sm">No portfolio positions entered.</td></tr>}
+            {positions.map((p) => (
+              <Fragment key={p.id}>
+              <tr className="border-b border-surface-container">
+                <td className="py-cell-padding-y px-cell-padding-x font-bold text-on-surface">{p.ticker}</td>
+                <td className="py-cell-padding-y px-cell-padding-x text-right">{fmtNum(p.shares, 2)}</td>
+                <td className="py-cell-padding-y px-cell-padding-x text-right">{fmtPrice(p.average_cost)}</td>
+                <td className="py-cell-padding-y px-cell-padding-x text-right">{fmtPrice(p.shares * p.average_cost)}</td>
+                <td className="py-cell-padding-y px-cell-padding-x text-center">
+                  <button
+                    onClick={() => setExpandedTicker(expandedTicker === p.ticker ? null : p.ticker)}
+                    className="text-secondary underline"
+                  >
+                    {trades.filter((t) => t.ticker === p.ticker).length} total
+                  </button>
+                  <div className="text-[11px] text-on-surface-variant">{p.open_option_count} open</div>
+                </td>
+                <td className="py-cell-padding-y px-cell-padding-x">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${p.wheel_status === "available" ? "bg-success/10 text-success" : p.wheel_status === "active_option" ? "bg-info/10 text-info" : "bg-warning/10 text-warning"}`}>
+                    {p.wheel_status === "available" ? "Available for wheel" : p.wheel_status === "active_option" ? "Option active" : "Needs 100 shares"}
+                  </span>
+                </td>
+                <td className="py-cell-padding-y px-cell-padding-x text-right">
+                  <button onClick={() => onDelete(p.id)} className="text-danger text-body-sm underline">Delete</button>
+                </td>
+              </tr>
+              {expandedTicker === p.ticker && (
+                <tr className="bg-surface-container-high/30">
+                  <td colSpan={7} className="p-4">
+                    <div className="text-label-mono text-on-surface-variant uppercase mb-2">{p.ticker} option strategy history</div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-body-sm">
+                        <thead>
+                          <tr className="border-b border-outline-variant text-label-mono text-on-surface-variant uppercase">
+                            <th className="py-2 px-2 font-normal">Strategy</th>
+                            <th className="py-2 px-2 font-normal text-right">Strike</th>
+                            <th className="py-2 px-2 font-normal text-right">Qty</th>
+                            <th className="py-2 px-2 font-normal text-right">Premium</th>
+                            <th className="py-2 px-2 font-normal">Opened</th>
+                            <th className="py-2 px-2 font-normal">Expiration</th>
+                            <th className="py-2 px-2 font-normal">Status</th>
+                            <th className="py-2 px-2 font-normal text-right">P/L</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {trades.filter((t) => t.ticker === p.ticker).map((t) => (
+                            <tr key={t.id} className="border-b border-surface-container">
+                              <td className="py-2 px-2">{STRATEGY_LABEL[t.strategy]}</td>
+                              <td className="py-2 px-2 text-right">{fmtPrice(t.strike)}</td>
+                              <td className="py-2 px-2 text-right">{t.qty}</td>
+                              <td className="py-2 px-2 text-right">{fmtPrice(t.premium_collected)}</td>
+                              <td className="py-2 px-2">{fmtDate(t.open_date)}</td>
+                              <td className="py-2 px-2">{fmtDate(t.expiration_date)}</td>
+                              <td className="py-2 px-2"><span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${STATUS_CLS[t.status]}`}>{STATUS_LABEL[t.status]}</span></td>
+                              <td className="py-2 px-2 text-right"><PLBadge value={t.pl} /></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function CloseTradeForm({ trade, onClose, onCancel }) {
   const [status, setStatus] = useState("expired");
   const [closeDate, setCloseDate] = useState(new Date().toISOString().slice(0, 10));
@@ -262,12 +433,18 @@ function LiveQuoteCells({ tradeId }) {
 
 export default function WheelTracker() {
   const [trades, setTrades] = useState(null);
+  const [positions, setPositions] = useState(null);
   const [error, setError] = useState(null);
   const [showNewForm, setShowNewForm] = useState(false);
   const [closingId, setClosingId] = useState(null);
 
   function reload() {
-    fetchTrades().then(setTrades).catch(setError);
+    Promise.all([fetchTrades(), fetchPositions()])
+      .then(([nextTrades, nextPositions]) => {
+        setTrades(nextTrades);
+        setPositions(nextPositions);
+      })
+      .catch(setError);
   }
 
   useEffect(() => {
@@ -311,6 +488,17 @@ export default function WheelTracker() {
     reload();
   }
 
+  async function handlePositionCreate(payload) {
+    await createPosition(payload);
+    reload();
+  }
+
+  async function handlePositionDelete(id) {
+    if (!confirm("Delete this portfolio position?")) return;
+    await deletePosition(id);
+    reload();
+  }
+
   if (error) {
     return (
       <Layout title="Wheel Tracker">
@@ -325,7 +513,7 @@ export default function WheelTracker() {
     );
   }
 
-  if (!trades || !stats) {
+  if (!trades || !positions || !stats) {
     return <Layout title="Wheel Tracker"><p className="text-on-surface-variant">Loading trades...</p></Layout>;
   }
 
@@ -354,6 +542,8 @@ export default function WheelTracker() {
         <StatCard label="Avg Days (Closed)" value={fmtNum(stats.avgDaysClosed, 1)} sub="Open -> close" />
         <StatCard label="Close Breakdown" value={`${stats.assignedCount}/${stats.expiredCount}/${stats.btcCount}`} sub="Assigned / Expired / BTC" />
       </div>
+
+      <PortfolioPositions positions={positions} trades={trades} onCreate={handlePositionCreate} onDelete={handlePositionDelete} />
 
       <div className="bg-surface-container-lowest border border-outline-variant rounded-lg flex flex-col">
         <div className="p-4 border-b border-surface-container">

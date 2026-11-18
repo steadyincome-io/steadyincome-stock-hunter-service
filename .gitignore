@@ -54,3 +54,5 @@ trades*
 !trades/.env.example
 
 *.parquet*
+
+devoted_dividend_portfolio_2026-10-19.csv

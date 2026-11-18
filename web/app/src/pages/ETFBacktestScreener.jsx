@@ -8,6 +8,18 @@ import { fetchLivePrices } from "../lib/optionsApi";
 
 const INVESTED_AMOUNT = 10000;
 
+// Structural-risk flag. This is intentionally separate from measured NAV
+// erosion, which comes from the SEC N-PORT metrics stored in the database.
+function hasNavErosionRisk(etf) {
+  const text = `${etf.ticker || ""} ${etf.name || ""}`.toLowerCase();
+  const riskTerms = [
+    "covered call", "option income", "premium income", "high income",
+    "yieldmax", "0dte", "daily target", "leveraged", "inverse", "ultra",
+    "2x", "3x", "-1x", "short etf", "bear etf",
+  ];
+  return riskTerms.some((term) => text.includes(term));
+}
+
 // Days since the 52-week-low date, using the snapshot's updated_at as "today"
 // (the pipeline's own notion of "now") rather than the browser's clock, so
 // this stays consistent with the rest of the data even if it's stale.
@@ -162,7 +174,14 @@ export default function ETFBacktestScreener() {
           annualizedReturnPct,
         };
       }
-      return { ...etf, price, priceSource, current_drawdown_pct: currentDrawdownPct, backtest };
+      return {
+        ...etf,
+        price,
+        priceSource,
+        current_drawdown_pct: currentDrawdownPct,
+        nav_erosion_risk: hasNavErosionRisk(etf),
+        backtest,
+      };
     });
   }, [etfs, livePrices, queryOne]);
 
@@ -203,7 +222,10 @@ export default function ETFBacktestScreener() {
             annual rate -- ((endValue/startValue)^(365/daysHeld) - 1) -- not a linear x365/days scale-up, since that
             would badly overstate short holds. It's an annualization of the realized return, not a forecast that
             the same rate continues. Price is fetched live from the backend when available, with the pipeline
-            snapshot as a fallback. Click a numeric column header to sort.
+            snapshot as a fallback. NAV Erosion is calculated from SEC N-PORT reported NAV observations over
+            approximately one year; distributions are shown separately so a falling NAV is not hidden by cash
+            payouts. Unknown means the ETF lacks enough reported NAV history. Structure Risk is only a warning
+            based on the fund name/ticker. Click a numeric column header to sort.
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -214,6 +236,10 @@ export default function ETFBacktestScreener() {
                 <SortableTh label="Price" sortKey="price" sort={sort} onSort={handleSort} />
                 <SortableTh label="52W High" sortKey="high52w" sort={sort} onSort={handleSort} />
                 <SortableTh label="Holdings" sortKey="holdingsCount" sort={sort} onSort={handleSort} />
+                <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">NAV Erosion</th>
+                <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">1Y NAV</th>
+                <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">Adj. NAV</th>
+                <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">Structure Risk</th>
                 <SortableTh label="Current DD" sortKey="current_drawdown_pct" sort={sort} onSort={handleSort} />
                 <SortableTh label="52W Low" sortKey="lowPrice" sort={sort} onSort={handleSort} />
                 <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">Low Date</th>
@@ -243,6 +269,18 @@ export default function ETFBacktestScreener() {
                   <td className="py-cell-padding-y px-cell-padding-x text-right">{fmtPrice(r.high_52w)}</td>
                   <td className="py-cell-padding-y px-cell-padding-x text-right">
                     {r.holdings_count != null ? Number(r.holdings_count).toLocaleString() : "--"}
+                  </td>
+                  <td className={`py-cell-padding-y px-cell-padding-x text-right font-medium ${r.nav_erosion_status === "yes" ? "text-danger" : r.nav_erosion_status === "no" ? "text-success" : "text-on-surface-variant"}`}>
+                    {r.nav_erosion_status === "yes" ? "Yes" : r.nav_erosion_status === "no" ? "No" : "Unknown"}
+                  </td>
+                  <td className={`py-cell-padding-y px-cell-padding-x text-right ${changeColorClass(r.raw_nav_return_pct)}`}>
+                    {r.raw_nav_return_pct != null ? fmtPct(r.raw_nav_return_pct) : "--"}
+                  </td>
+                  <td className={`py-cell-padding-y px-cell-padding-x text-right ${changeColorClass(r.distribution_adjusted_return_pct)}`}>
+                    {r.distribution_adjusted_return_pct != null ? fmtPct(r.distribution_adjusted_return_pct) : "--"}
+                  </td>
+                  <td className={`py-cell-padding-y px-cell-padding-x text-right font-medium ${r.nav_erosion_risk ? "text-danger" : "text-success"}`}>
+                    {r.nav_erosion_risk ? "Yes" : "No"}
                   </td>
                   <td className={`py-cell-padding-y px-cell-padding-x text-right ${changeColorClass(r.current_drawdown_pct)}`}>
                     {r.current_drawdown_pct != null ? fmtPct(r.current_drawdown_pct) : "--"}

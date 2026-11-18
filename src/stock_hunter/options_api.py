@@ -266,6 +266,17 @@ CREATE TABLE IF NOT EXISTS trades (
     created_at DATETIME NOT NULL DEFAULT (datetime('now')),
     updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS portfolio_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL UNIQUE,
+    shares REAL NOT NULL,
+    average_cost REAL NOT NULL,
+    as_of_date DATE NOT NULL,
+    notes TEXT,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -315,6 +326,138 @@ def _trade_to_dict(row: sqlite3.Row) -> dict:
 
 _TRADE_FIELDS = {"ticker", "strategy", "strike", "qty", "premium_collected", "delta_at_open", "open_date", "expiration_date", "open_fees", "notes"}
 _CLOSE_FIELDS = {"status", "close_date", "close_cost", "fees", "notes"}
+
+
+def _position_to_dict(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    d["covered_call_ready"] = d["shares"] >= 100 and d["open_option_count"] == 0
+    d["wheel_status"] = (
+        "available"
+        if d["covered_call_ready"]
+        else "active_option"
+        if d["open_option_count"] > 0
+        else "needs_100_shares"
+    )
+    return d
+
+
+_POSITION_FIELDS = {"ticker", "shares", "average_cost", "as_of_date", "notes"}
+
+
+@app.route("/api/positions", methods=["GET"])
+def list_positions():
+    conn = _wheel_conn()
+    rows = conn.execute(
+        """
+        SELECT p.*,
+               COUNT(CASE WHEN t.status = 'open' THEN 1 END) AS open_option_count,
+               COUNT(CASE WHEN t.status = 'open' AND t.strategy = 'cash_secured_put' THEN 1 END) AS open_put_count,
+               COUNT(CASE WHEN t.status = 'open' AND t.strategy = 'covered_call' THEN 1 END) AS open_call_count
+        FROM portfolio_positions p
+        LEFT JOIN trades t ON t.ticker = p.ticker
+        GROUP BY p.id
+        ORDER BY p.ticker
+        """
+    ).fetchall()
+    conn.close()
+    return jsonify([_position_to_dict(row) for row in rows])
+
+
+@app.route("/api/positions", methods=["POST"])
+def create_position():
+    body = request.get_json(silent=True) or {}
+    missing = [f for f in ("ticker", "shares", "average_cost", "as_of_date") if body.get(f) in (None, "")]
+    if missing:
+        return jsonify({"error": "missing_fields", "fields": missing}), 400
+    try:
+        ticker = body["ticker"].upper().strip()
+        shares = float(body["shares"])
+        average_cost = float(body["average_cost"])
+    except (AttributeError, TypeError, ValueError):
+        return jsonify({"error": "invalid_position_values"}), 400
+    if not ticker or shares <= 0 or average_cost < 0:
+        return jsonify({"error": "invalid_position_values"}), 400
+
+    conn = _wheel_conn()
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO portfolio_positions (ticker, shares, average_cost, as_of_date, notes)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (ticker, shares, average_cost, body["as_of_date"], body.get("notes")),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({"error": "position_exists", "detail": f"A position for {ticker} already exists"}), 409
+    row = conn.execute(
+        """
+        SELECT p.*, COUNT(CASE WHEN t.status = 'open' THEN 1 END) AS open_option_count,
+               COUNT(CASE WHEN t.status = 'open' AND t.strategy = 'cash_secured_put' THEN 1 END) AS open_put_count,
+               COUNT(CASE WHEN t.status = 'open' AND t.strategy = 'covered_call' THEN 1 END) AS open_call_count
+        FROM portfolio_positions p LEFT JOIN trades t ON t.ticker = p.ticker
+        WHERE p.id = ? GROUP BY p.id
+        """,
+        (cursor.lastrowid,),
+    ).fetchone()
+    conn.close()
+    return jsonify(_position_to_dict(row)), 201
+
+
+@app.route("/api/positions/<int:position_id>", methods=["PATCH"])
+def update_position(position_id: int):
+    body = request.get_json(silent=True) or {}
+    updates = {k: v for k, v in body.items() if k in _POSITION_FIELDS}
+    if not updates:
+        return jsonify({"error": "no_valid_fields"}), 400
+    if "ticker" in updates:
+        updates["ticker"] = str(updates["ticker"]).upper().strip()
+    for field in ("shares", "average_cost"):
+        if field in updates:
+            try:
+                updates[field] = float(updates[field])
+            except (TypeError, ValueError):
+                return jsonify({"error": "invalid_position_values"}), 400
+    if updates.get("shares", 1) <= 0 or updates.get("average_cost", 0) < 0:
+        return jsonify({"error": "invalid_position_values"}), 400
+
+    conn = _wheel_conn()
+    existing = conn.execute("SELECT id FROM portfolio_positions WHERE id = ?", (position_id,)).fetchone()
+    if not existing:
+        conn.close()
+        return jsonify({"error": "not_found"}), 404
+    try:
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        conn.execute(
+            f"UPDATE portfolio_positions SET {set_clause}, updated_at = datetime('now') WHERE id = ?",
+            (*updates.values(), position_id),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({"error": "position_exists"}), 409
+    row = conn.execute(
+        """
+        SELECT p.*, COUNT(CASE WHEN t.status = 'open' THEN 1 END) AS open_option_count,
+               COUNT(CASE WHEN t.status = 'open' AND t.strategy = 'cash_secured_put' THEN 1 END) AS open_put_count,
+               COUNT(CASE WHEN t.status = 'open' AND t.strategy = 'covered_call' THEN 1 END) AS open_call_count
+        FROM portfolio_positions p LEFT JOIN trades t ON t.ticker = p.ticker
+        WHERE p.id = ? GROUP BY p.id
+        """,
+        (position_id,),
+    ).fetchone()
+    conn.close()
+    return jsonify(_position_to_dict(row))
+
+
+@app.route("/api/positions/<int:position_id>", methods=["DELETE"])
+def delete_position(position_id: int):
+    conn = _wheel_conn()
+    conn.execute("DELETE FROM portfolio_positions WHERE id = ?", (position_id,))
+    conn.commit()
+    conn.close()
+    return "", 204
 
 
 @app.route("/api/trades", methods=["GET"])
