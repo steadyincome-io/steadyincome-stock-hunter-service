@@ -106,7 +106,7 @@ The dashboard is read-only. It does not write back to the database.
 
 ### 1. Initialize the SQLite Database
 
-Run the schema module to create `drawdown_analyzer.db` with normalized tables (`universe`, `daily_snapshot`, `price_history`, `insider_trades`, `sec_financials`, `sec_etf_reports`, `etf_holdings`, `eight_k_events`, `drawdown_events`, `drawdown_summary`, `distress_scores`, `congress_trades`, `pipeline_runs`):
+Run the schema module to create `drawdown_analyzer.db` with normalized tables (`universe`, `daily_snapshot`, `price_history`, `insider_trades`, `sec_financials`, `sec_etf_reports`, `etf_holdings`, `etf_nav_metrics`, `eight_k_events`, `drawdown_events`, `drawdown_summary`, `distress_scores`, `congress_trades`, `pipeline_runs`):
 
 ```bash
 PYTHONPATH=src python -m stock_hunter.schema
@@ -122,6 +122,7 @@ Each pipeline run now also computes, per active ticker:
 - **8-K debt/bankruptcy event tracking** (`sec_eightk_worker.py`) – ingests 8-K filings whose item codes indicate new debt, covenant triggers, refinancing, delisting, auditor changes, or bankruptcy (items 1.01, 1.02, 1.03, 2.03-2.06, 3.01, 4.01), stored in `eight_k_events`. A bankruptcy-item 8-K forces the composite risk score to "high" regardless of other inputs.
 - **Insider sentiment scoring** (`scoring.py`) – aggregates `insider_trades` over a trailing 180-day window into a 0-100 score, weighting open-market purchases/sales (codes `P`/`S`) far more heavily than grants, option exercises, tax withholding, or gifts (`A`/`M`/`F`/`G`), so routine equity-comp activity doesn't drown out genuine buying/selling signal.
 - **Composite risk / quality / investment scores** (`scoring.py`) – combine the above with live valuation (PE, FCF yield, dividend yield, EV/EBITDA), the LLM-derived filing risk score, and legal/regulatory sentiment into `daily_snapshot.risk_score`, `quality_score`, and `investment_score`.
+- **ETF NAV erosion metrics** (`etf_nav_worker.py`) – calculates the latest approximately one-year raw NAV return and distribution-adjusted return from SEC N-PORT NAV observations plus `dividend_history`, storing `yes` / `no` / `unknown` in `etf_nav_metrics`. Existing N-PORT filings missing NAV are automatically backfilled when the SEC worker runs again.
 
 These run automatically as part of `run_pipeline()` / `stock_hunter.service` — no separate command is needed.
 

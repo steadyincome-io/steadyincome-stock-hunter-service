@@ -91,6 +91,7 @@ def _extract_nport_with_bs4(xml_text):
     metric_map = {
         "total_assets": "totAssets",
         "net_assets": "netAssets",
+        "nav_per_share": "navPerShare",
     }
     for metric_name, tag_name in metric_map.items():
         value = None
@@ -346,6 +347,7 @@ def parse_nport_xml(xml_text):
         metric_map = {
             'total_assets': 'totAssets',
             'net_assets': 'netAssets',
+            'nav_per_share': 'navPerShare',
             # Note: We don't have a direct expense ratio in the main fundInfo for ETFs
             # It might be in a different section or calculated
         }
@@ -392,6 +394,7 @@ def parse_nport_xml(xml_text):
         direct_mapping = {
             'total_assets': 'totAssets',
             'net_assets': 'netAssets',
+            'nav_per_share': 'navPerShare',
         }
         
         for metric_name, tag_name in direct_mapping.items():
@@ -443,6 +446,8 @@ def parse_nport_xml(xml_text):
         metrics['total_assets'] = 0.0
     if 'net_assets' not in metrics:
         metrics['net_assets'] = 0.0
+    if 'nav_per_share' not in metrics:
+        metrics['nav_per_share'] = 0.0
     if 'expense_ratio' not in metrics:
         # For ETFs, expense ratio might be in a different location or not available
         # We'll set a default or try to find it elsewhere
@@ -631,6 +636,7 @@ def sync_etf_reports(db_path="drawdown_analyzer.db", years_back=2):
     
     total_records = 0
     new_count = 0
+    updated_count = 0
     holdings_count = 0
     skipped_count = 0
     
@@ -643,15 +649,25 @@ def sync_etf_reports(db_path="drawdown_analyzer.db", years_back=2):
 
         # Check what we already have for this ticker
         cursor.execute("""
-            SELECT accession_number FROM sec_etf_reports WHERE ticker = ?
+            SELECT accession_number, nav_per_share
+            FROM sec_etf_reports
+            WHERE ticker = ?
         """, (ticker,))
-        existing_accessions = {row[0] for row in cursor.fetchall()}
+        existing_reports = {row[0]: row[1] for row in cursor.fetchall()}
         
         # Fetch filings
         filings = fetch_nport_ncen_filings(ticker, cik, years_back)
         
         # Filter for new filings only
-        new_filings = [f for f in filings if f['accession_number'] not in existing_accessions]
+        # Revisit existing N-PORT filings whose NAV was not extracted by an
+        # earlier parser version. Once populated, they remain skipped on later
+        # runs. N-CEN does not provide the NAV series needed here.
+        new_filings = [
+            f for f in filings
+            if f['accession_number'] not in existing_reports
+            or (f['form_type'] in ['N-PORT', 'NPORT-P', 'NPORT-EX']
+                and not existing_reports.get(f['accession_number']))
+        ]
         skip_count = len(filings) - len(new_filings)
         skipped_count += skip_count
         
@@ -659,7 +675,7 @@ def sync_etf_reports(db_path="drawdown_analyzer.db", years_back=2):
             ticker_done(ticker, f"all {len(filings)} filings already up to date; skipped {skip_count}")
             continue
         
-        ticker_start(ticker, f"{len(new_filings)} new filings, {skip_count} already complete")
+        ticker_start(ticker, f"{len(new_filings)} new or NAV-backfill filings, {skip_count} already complete")
         
         # Process each new filing
         for f in new_filings:
@@ -689,12 +705,22 @@ def sync_etf_reports(db_path="drawdown_analyzer.db", years_back=2):
             # Insert into sec_etf_reports
             try:
                 cursor.execute("""
-                    INSERT OR IGNORE INTO sec_etf_reports (
+                    INSERT INTO sec_etf_reports (
                         ticker, cik, form_type, filing_date, period_end_date,
                         accession_number, primary_doc_description,
                         total_assets, net_assets, nav_per_share,
                         expense_ratio, turnover_rate, cash_percentage, report_url
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ticker, form_type, filing_date, accession_number) DO UPDATE SET
+                        period_end_date=excluded.period_end_date,
+                        primary_doc_description=excluded.primary_doc_description,
+                        total_assets=excluded.total_assets,
+                        net_assets=excluded.net_assets,
+                        nav_per_share=excluded.nav_per_share,
+                        expense_ratio=excluded.expense_ratio,
+                        turnover_rate=excluded.turnover_rate,
+                        cash_percentage=excluded.cash_percentage,
+                        report_url=excluded.report_url
                 """, (
                     f['ticker'], f['cik'], form_type, f['filing_date'], end_date,
                     accn, f['primary_doc_description'],
@@ -703,7 +729,9 @@ def sync_etf_reports(db_path="drawdown_analyzer.db", years_back=2):
                     metrics.get('turnover_rate'), metrics.get('cash_percentage'),
                     f['report_url']
                 ))
-                if cursor.rowcount > 0:
+                if accn in existing_reports:
+                    updated_count += 1
+                else:
                     new_count += 1
                 total_records += 1
             except Exception as e:
@@ -743,6 +771,7 @@ def sync_etf_reports(db_path="drawdown_analyzer.db", years_back=2):
     
     success("ETF reports sync complete")
     info(f"New filings processed: {new_count}")
+    info(f"Existing filings updated: {updated_count}")
     info(f"Holdings inserted: {holdings_count}")
     info(f"Already up to date: {skipped_count} skipped")
     info(f"Total records touched: {total_records}")
