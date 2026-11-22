@@ -170,6 +170,17 @@ CREATE TABLE IF NOT EXISTS etf_nav_metrics (
     FOREIGN KEY(ticker) REFERENCES universe(ticker)
 );
 
+CREATE TABLE IF NOT EXISTS etf_nav_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    nav_date DATE NOT NULL,
+    nav_per_share REAL NOT NULL,
+    source TEXT NOT NULL,
+    fetched_at DATETIME,
+    UNIQUE(ticker, nav_date, source),
+    FOREIGN KEY(ticker) REFERENCES universe(ticker)
+);
+
 CREATE TABLE IF NOT EXISTS etf_holdings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker TEXT NOT NULL,
@@ -405,6 +416,18 @@ def migrate_db(db_path=DB_NAME):
                 status TEXT NOT NULL DEFAULT 'unknown',
                 source TEXT,
                 updated_at DATETIME,
+                FOREIGN KEY(ticker) REFERENCES universe(ticker)
+            )
+        """),
+        ("etf_nav_history", """
+            CREATE TABLE IF NOT EXISTS etf_nav_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                nav_date DATE NOT NULL,
+                nav_per_share REAL NOT NULL,
+                source TEXT NOT NULL,
+                fetched_at DATETIME,
+                UNIQUE(ticker, nav_date, source),
                 FOREIGN KEY(ticker) REFERENCES universe(ticker)
             )
         """),

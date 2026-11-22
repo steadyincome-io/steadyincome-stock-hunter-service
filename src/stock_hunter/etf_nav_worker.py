@@ -42,6 +42,20 @@ def sync_etf_nav_metrics(db_path="drawdown_analyzer.db"):
         # the last row encountered after the filing-date ordering above.
         observations.setdefault(ticker, {})[period_end] = float(nav)
 
+    # Prefer issuer-published daily NAV history when available. SEC N-PORT is
+    # retained as a fallback for funds without an issuer adapter.
+    cur.execute("""
+        SELECT ticker, nav_date, nav_per_share, source
+        FROM etf_nav_history
+        WHERE nav_per_share > 0
+        ORDER BY ticker, nav_date ASC
+    """)
+    issuer_observations = {}
+    issuer_sources = {}
+    for ticker, nav_date, nav, source in cur.fetchall():
+        issuer_observations.setdefault(ticker, {})[nav_date] = float(nav)
+        issuer_sources[ticker] = source
+
     cur.execute("SELECT ticker, ex_date, amount_per_share FROM dividend_history")
     distributions = {}
     for ticker, ex_date, amount in cur.fetchall():
@@ -53,10 +67,12 @@ def sync_etf_nav_metrics(db_path="drawdown_analyzer.db"):
     written = 0
 
     for ticker in etfs:
-        points = sorted(observations.get(ticker, {}).items())
+        active_observations = issuer_observations.get(ticker) or observations.get(ticker, {})
+        source = issuer_sources.get(ticker, "SEC N-PORT monthly NAV")
+        points = sorted(active_observations.items())
         status = "unknown"
         values = (ticker, None, None, None, None, None, None, None, len(points), status,
-                  "SEC N-PORT monthly NAV", now)
+                  source, now)
 
         if len(points) >= MIN_OBSERVATIONS:
             end_date, end_nav = points[-1]
@@ -84,7 +100,7 @@ def sync_etf_nav_metrics(db_path="drawdown_analyzer.db"):
                 values = (ticker, start_date, end_date, start_nav, end_nav,
                           round(raw_return, 4), round(paid, 6),
                           round(adjusted_return, 4), window_count, status,
-                          "SEC N-PORT monthly NAV + dividend_history", now)
+                          f"{source} + dividend_history", now)
 
         cur.execute("""
             INSERT INTO etf_nav_metrics (

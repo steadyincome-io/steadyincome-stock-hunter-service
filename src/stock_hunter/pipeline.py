@@ -11,6 +11,7 @@ from .sec_financials_worker import sync_10k_10q_financials, get_annual_revenue_h
 from .sec_eightk_worker import sync_8k_events
 from .dividend_worker import sync_dividend_history, sync_dividend_history_from_mongo
 from .etf_nav_worker import sync_etf_nav_metrics
+from .issuer_nav_worker import sync_issuer_nav_history
 from .yfinance_throttle import throttle_yfinance
 from .drawdown_analytics import compute_and_store_drawdowns, drawdown_opportunity_score
 from .distress_analytics import compute_distress, store_distress_score
@@ -885,12 +886,19 @@ def run_pipeline(db_path=DB_NAME, skip_form4=False, reset_financials=False, resu
         error(f"MongoDB dividend history sync failed: {e}")
     progress(98, "Phase 4c/5: MongoDB dividend history synced")
 
-    step("Step 4d/5: calculating ETF NAV erosion metrics")
+    step("Step 4d/5: syncing official issuer ETF NAV history")
+    try:
+        sync_issuer_nav_history(db_path)
+    except Exception as e:
+        error(f"Issuer ETF NAV sync failed: {e}")
+    progress(99, "Phase 4d/5: official issuer NAV history synced")
+
+    step("Step 4e/5: calculating ETF NAV erosion metrics")
     try:
         sync_etf_nav_metrics(db_path)
     except Exception as e:
         error(f"ETF NAV metrics sync failed: {e}")
-    progress(99, "Phase 4d/5: ETF NAV metrics calculated")
+    progress(99, "Phase 4e/5: ETF NAV metrics calculated")
 
     # Step 5: Record Pipeline Execution
     step("Step 5/5: writing pipeline run record")
