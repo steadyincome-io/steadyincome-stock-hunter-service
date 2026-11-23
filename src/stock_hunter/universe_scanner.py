@@ -148,6 +148,28 @@ def _enrich_with_sector_industry(ticker, name, asset_type, market_cap_usd):
     }
 
 
+def _load_previous_rows(output_path):
+    """Load the last successful scan so transient quote failures do not erase
+    otherwise valid universe members. A carried-forward row is only used when
+    the new lookup returns ``None``; a confirmed below-threshold value still
+    removes the ticker normally.
+    """
+    if not os.path.exists(output_path):
+        return {}
+    try:
+        with open(output_path, newline="", encoding="utf-8") as f:
+            rows = csv.DictReader(f)
+            previous = {}
+            for row in rows:
+                ticker = (row.get("ticker") or "").strip()
+                if ticker and row.get("market_cap"):
+                    previous[ticker] = row
+            return previous
+    except (OSError, csv.Error) as exc:
+        warning(f"Could not read previous universe scan {output_path}: {exc}")
+        return {}
+
+
 def scan_universe(output_path=OUTPUT_PATH, threshold_usd=MARKET_CAP_THRESHOLD_USD):
     if yf is None:
         error("yfinance is unavailable; cannot scan the universe")
@@ -158,16 +180,34 @@ def scan_universe(output_path=OUTPUT_PATH, threshold_usd=MARKET_CAP_THRESHOLD_US
     success(f"Loaded {len(symbols)} symbols from NASDAQ Trader (test issues excluded)")
 
     survivors = []
+    previous_rows = _load_previous_rows(output_path)
+    carried_forward = []
     total = len(symbols)
     for index, (ticker, name, asset_type) in enumerate(symbols, start=1):
         value = _fetch_market_cap_or_aum(ticker, asset_type)
         if value is not None and value >= threshold_usd:
             survivors.append((ticker, name, asset_type, value))
+        elif value is None and ticker in previous_rows:
+            # Keep the last known membership when Yahoo temporarily omits
+            # totalAssets/marketCap or rate-limits this individual symbol.
+            prior = previous_rows[ticker]
+            survivors.append((
+                ticker,
+                prior.get("name") or name,
+                prior.get("asset_type") or asset_type,
+                float(prior["market_cap"]) * 1e9,
+            ))
+            carried_forward.append(ticker)
         if index % 500 == 0 or index == total:
             progress((index / total) * 70, f"Phase 1: scanned {index}/{total} symbols, {len(survivors)} so far >= threshold")
         time.sleep(REQUEST_DELAY_SEC)
 
     success(f"Phase 1 complete: {len(survivors)} symbols currently >= ${threshold_usd / 1e9:.0f}B")
+    if carried_forward:
+        warning(
+            f"Carried forward {len(carried_forward)} prior universe member(s) because market cap/AUM lookup failed; "
+            "they will be removed only after a confirmed below-threshold lookup."
+        )
 
     banner("Universe scan: Phase 2 -- sector/industry enrichment for survivors")
     rows = []

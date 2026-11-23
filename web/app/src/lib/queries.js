@@ -189,9 +189,36 @@ export const QUERIES = {
 
   // ---- ETF Backtest Screener (new) ------------------------------------------
   etfBacktestList: `
+    WITH price_bounds AS (
+      SELECT
+        ph.ticker,
+        MIN(ph.trade_date) AS inception_date,
+        MAX(ph.trade_date) AS latest_date,
+        (SELECT close_price FROM price_history first_price
+         WHERE first_price.ticker = ph.ticker
+         ORDER BY trade_date ASC, id ASC LIMIT 1) AS inception_close,
+        (SELECT close_price FROM price_history last_price
+         WHERE last_price.ticker = ph.ticker
+         ORDER BY trade_date DESC, id DESC LIMIT 1) AS latest_close
+      FROM price_history ph
+      GROUP BY ph.ticker
+    ), dividend_stats AS (
+      SELECT
+        pb.ticker,
+        SUM(CASE WHEN dh.ex_date >= pb.inception_date AND dh.ex_date <= pb.latest_date
+                 THEN dh.amount_per_share ELSE 0 END) AS distributions_since_inception,
+        SUM(CASE WHEN dh.ex_date >= date(pb.latest_date, '-365 days') AND dh.ex_date <= pb.latest_date
+                 THEN dh.amount_per_share ELSE 0 END) AS latest_annual_dividend
+      FROM price_bounds pb
+      LEFT JOIN dividend_history dh ON dh.ticker = pb.ticker
+      GROUP BY pb.ticker
+    )
     SELECT
       u.ticker, u.name, u.market_cap,
       ds.price, ds.high_52w, ds.low_52w, ds.current_drawdown_pct, ds.updated_at,
+      pb.inception_date, pb.inception_close, pb.latest_date, pb.latest_close,
+      COALESCE(divs.distributions_since_inception, 0) AS distributions_since_inception,
+      divs.latest_annual_dividend,
       ehc.holdings_count,
       nav.status AS nav_erosion_status,
       nav.raw_nav_return_pct,
@@ -216,6 +243,8 @@ export const QUERIES = {
       GROUP BY eh.ticker
     ) ehc ON ehc.ticker = u.ticker
     LEFT JOIN etf_nav_metrics nav ON nav.ticker = u.ticker
+    LEFT JOIN price_bounds pb ON pb.ticker = u.ticker
+    LEFT JOIN dividend_stats divs ON divs.ticker = u.ticker
     WHERE u.asset_type = 'ETF' AND u.status = 'active' AND ds.price IS NOT NULL
     ORDER BY ds.current_drawdown_pct ASC
   `,

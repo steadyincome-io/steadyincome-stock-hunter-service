@@ -44,6 +44,8 @@ const SORTABLE_COLUMNS = {
   gainDollars: (r) => r.backtest?.gainDollars,
   dividendsEarned: (r) => r.backtest?.dividendsEarned,
   annualizedReturnPct: (r) => r.backtest?.annualizedReturnPct,
+  inceptionCagrPct: (r) => r.inceptionCagrPct,
+  latestAnnualDividend: (r) => r.latest_annual_dividend,
   drawdowns_over_10pct: (r) => r.drawdowns_over_10pct,
   worst_drawdown_pct: (r) => r.worst_drawdown_pct,
 };
@@ -143,6 +145,20 @@ export default function ETFBacktestScreener() {
         ? ((price - etf.high_52w) / etf.high_52w) * 100
         : etf.current_drawdown_pct;
 
+      // The pipeline currently stores five years of price history. Calculate
+      // from the earliest/latest stored observations and include distributions
+      // as cash (not reinvested), so this is explicit about its data basis.
+      const historyDays = etf.inception_date && etf.latest_date
+        ? daysSince(etf.inception_date, etf.latest_date)
+        : null;
+      const historyYears = historyDays > 0 ? historyDays / 365.25 : null;
+      const totalReturnMultiple = etf.inception_close > 0 && etf.latest_close > 0
+        ? (etf.latest_close + Number(etf.distributions_since_inception || 0)) / etf.inception_close
+        : null;
+      const inceptionCagrPct = historyYears && totalReturnMultiple > 0
+        ? (Math.pow(totalReturnMultiple, 1 / historyYears) - 1) * 100
+        : null;
+
       const low = queryOne(QUERIES.etf52wLowDate, [etf.ticker]);
       let backtest = null;
       if (low && low.close_price > 0 && price != null) {
@@ -180,6 +196,7 @@ export default function ETFBacktestScreener() {
         priceSource,
         current_drawdown_pct: currentDrawdownPct,
         nav_erosion_risk: hasNavErosionRisk(etf),
+        inceptionCagrPct,
         backtest,
       };
     });
@@ -222,7 +239,10 @@ export default function ETFBacktestScreener() {
             annual rate -- ((endValue/startValue)^(365/daysHeld) - 1) -- not a linear x365/days scale-up, since that
             would badly overstate short holds. It's an annualization of the realized return, not a forecast that
             the same rate continues. Price is fetched live from the backend when available, with the pipeline
-            snapshot as a fallback. NAV Erosion is calculated from SEC N-PORT reported NAV observations over
+            snapshot as a fallback. CAGR Since History Start uses the earliest/latest stored price observations
+            (currently up to five years) plus cumulative cash distributions; it is not a reinvested total-return
+            CAGR or a guarantee that the data begins at the fund's legal inception. Latest Annual Dividend is the
+            trailing 365-day per-share distribution total. NAV Erosion is calculated from SEC N-PORT reported NAV observations over
             approximately one year; distributions are shown separately so a falling NAV is not hidden by cash
             payouts. Unknown means the ETF lacks enough reported NAV history. Structure Risk is only a warning
             based on the fund name/ticker. Click a numeric column header to sort.
@@ -234,6 +254,8 @@ export default function ETFBacktestScreener() {
               <tr className="border-b border-surface-container text-label-mono text-on-surface-variant uppercase">
                 <th className="py-cell-padding-y px-cell-padding-x font-normal">Ticker</th>
                 <SortableTh label="Price" sortKey="price" sort={sort} onSort={handleSort} />
+                <SortableTh label="CAGR Since History Start" sortKey="inceptionCagrPct" sort={sort} onSort={handleSort} />
+                <SortableTh label="Latest Annual Dividend" sortKey="latestAnnualDividend" sort={sort} onSort={handleSort} />
                 <SortableTh label="52W High" sortKey="high52w" sort={sort} onSort={handleSort} />
                 <SortableTh label="Holdings" sortKey="holdingsCount" sort={sort} onSort={handleSort} />
                 <th className="py-cell-padding-y px-cell-padding-x font-normal text-right">NAV Erosion</th>
@@ -265,6 +287,12 @@ export default function ETFBacktestScreener() {
                       <span>{fmtPrice(r.price)}</span>
                       <PriceSourceChip source={r.priceSource} />
                     </div>
+                  </td>
+                  <td className={`py-cell-padding-y px-cell-padding-x text-right font-medium ${changeColorClass(r.inceptionCagrPct)}`}>
+                    {r.inceptionCagrPct != null ? fmtPct(r.inceptionCagrPct, 2) : "--"}
+                  </td>
+                  <td className="py-cell-padding-y px-cell-padding-x text-right">
+                    {r.latest_annual_dividend != null ? fmtPrice(r.latest_annual_dividend) : "--"}
                   </td>
                   <td className="py-cell-padding-y px-cell-padding-x text-right">{fmtPrice(r.high_52w)}</td>
                   <td className="py-cell-padding-y px-cell-padding-x text-right">
