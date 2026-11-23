@@ -1,4 +1,5 @@
 import csv
+import math
 import sqlite3
 import os
 from .logger import info, success, warning
@@ -497,12 +498,35 @@ def sync_universe_from_csv(db_path=DB_NAME, csv_path=UNIVERSE_CSV_PATH):
         _warn_if_universe_empty(f"{csv_path} is empty")
         return 0
 
+    valid_rows = []
+    invalid_rows = []
+    for row in rows:
+        ticker = (row.get("ticker") or "").strip()
+        raw_market_cap = row.get("market_cap")
+        try:
+            market_cap = float(raw_market_cap)
+            if not ticker or not math.isfinite(market_cap) or market_cap <= 0:
+                raise ValueError("market_cap must be a positive finite number")
+        except (TypeError, ValueError):
+            invalid_rows.append(ticker or "<missing ticker>")
+            continue
+        valid_rows.append((row, ticker, market_cap))
+
+    if invalid_rows:
+        warning(
+            f"Skipping {len(invalid_rows)} malformed universe CSV row(s): "
+            + ", ".join(invalid_rows[:10])
+            + (" ..." if len(invalid_rows) > 10 else "")
+        )
+    if not valid_rows:
+        _warn_if_universe_empty(f"No valid rows found in {csv_path}")
+        return 0
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     csv_tickers = set()
-    for row in rows:
-        ticker = row["ticker"]
+    for row, ticker, market_cap in valid_rows:
         csv_tickers.add(ticker)
         cursor.execute("""
             INSERT INTO universe (ticker, name, asset_type, sector, industry, market_cap, status, last_updated)
@@ -517,7 +541,7 @@ def sync_universe_from_csv(db_path=DB_NAME, csv_path=UNIVERSE_CSV_PATH):
                 last_updated = datetime('now')
         """, (
             ticker, row["name"], row["asset_type"], row["sector"], row["industry"],
-            float(row["market_cap"]),
+            market_cap,
         ))
 
     cursor.execute("SELECT ticker FROM universe WHERE status = 'active'")
